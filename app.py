@@ -321,6 +321,18 @@ def raw_value(task: dict[str, Any], candidates: list[str]) -> str:
     return ""
 
 
+def raw_column_name(raw: dict[str, Any], candidates: list[str]) -> str | None:
+    normalized = {normalize(column): column for column in raw.keys()}
+    for candidate in candidates:
+        wanted = normalize(candidate)
+        if wanted in normalized:
+            return normalized[wanted]
+    for norm, original in normalized.items():
+        if any(normalize(candidate) in norm for candidate in candidates):
+            return original
+    return None
+
+
 def task_title(task: dict[str, Any]) -> str:
     title = raw_value(
         task,
@@ -597,6 +609,68 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
     return buffer.getvalue()
 
 
+def advance_date(value: Any) -> str:
+    if not value:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.strftime("%d/%m/%Y")
+    except Exception:
+        return str(value)[:10]
+
+
+def program_updated_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]]) -> bytes:
+    latest = latest_status_by_task(advances)
+    rows: list[dict[str, Any]] = []
+    columns: list[str] = []
+
+    for task in tasks:
+        raw = task.get("raw") or {}
+        if isinstance(raw, dict) and raw:
+            row = dict(raw)
+        else:
+            row = {
+                "OT": ot_text(task.get("nro_ot")),
+                "Titulo tarea": task_title(task),
+                "Trabajo": task.get("tarea", ""),
+                "Fecha inicio": format_date(task.get("fecha_inicio")),
+                "Fecha fin": format_date(task.get("fecha_fin")),
+                "Estado": task.get("estado_programa") or "",
+                "Cuadrilla": task.get("cuadrilla") or "",
+                "Ubicacion tecnica": task.get("ubicacion_tecnica") or "",
+                "KKS/TAG": task.get("kks_tag") or "",
+            }
+
+        advance = latest.get(task["id"])
+        if advance:
+            state_col = raw_column_name(row, ["estado", "status", "estado actual"]) or "Estado"
+            row[state_col] = advance.get("action", "")
+
+            changed_on = advance_date(advance.get("created_at"))
+            if advance.get("action") == "EN CURSO" and changed_on:
+                start_col = raw_column_name(row, ["fecha inicio", "inicio", "start"]) or "Fecha inicio"
+                row[start_col] = changed_on
+            elif advance.get("action") == "COMPLETADO" and changed_on:
+                end_col = raw_column_name(row, ["fecha fin", "fecha vencimiento", "vencimiento", "fin", "due"]) or "Fecha fin"
+                row[end_col] = changed_on
+
+        if "OT" in row:
+            row["OT"] = ot_text(row.get("OT"))
+        else:
+            nro_col = raw_column_name(row, ["nro ot", "nro de ot", "numero ot", "ot", "orden"])
+            if nro_col:
+                row[nro_col] = ot_text(row.get(nro_col))
+
+        for column in row.keys():
+            if column not in columns:
+                columns.append(column)
+        rows.append(row)
+
+    buffer = io.BytesIO()
+    pd.DataFrame(rows, columns=columns).to_excel(buffer, index=False)
+    return buffer.getvalue()
+
+
 def format_datetime(value: Any) -> str:
     if not value:
         return ""
@@ -838,7 +912,7 @@ def main() -> None:
                 st.success("Registros del programa eliminados.")
                 st.rerun()
 
-    e1, e2 = st.columns(2)
+    e1, e2, e3 = st.columns(3)
     e1.download_button(
         "Exportar log Excel",
         data=advances_export(filtered, filtered_advances, final_only=False),
@@ -848,6 +922,11 @@ def main() -> None:
         "Exportar estado final Excel",
         data=advances_export(filtered, filtered_advances, final_only=True),
         file_name=f"estado_final_{date.today().isoformat()}.xlsx",
+    )
+    e3.download_button(
+        "Exportar programa actualizado Excel",
+        data=program_updated_export(filtered, filtered_advances),
+        file_name=f"programa_actualizado_{date.today().isoformat()}.xlsx",
     )
 
 
