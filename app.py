@@ -528,12 +528,15 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
         status = advance.get("action") or task.get("estado_programa") or "SIN AVANCE"
         if status not in STATE_ACTIONS:
             status = "SIN AVANCE"
+        display_start = format_date(task.get("fecha_inicio"))
+        if status == "EN CURSO" and advance.get("created_at"):
+            display_start = advance_date(advance.get("created_at"))
         rows.append(
             {
                 "Seleccionar": False,
                 "Titulo tarea": task_title(task),
                 "Estado": status,
-                "Fecha inicio": format_date(task.get("fecha_inicio")),
+                "Fecha inicio": display_start,
                 "Duracion": f"{task.get('duracion') or 1} dia(s)",
                 "Cuadrilla": task.get("cuadrilla") or "",
                 "OT": ot_text(task.get("nro_ot")),
@@ -674,6 +677,9 @@ def program_updated_export(tasks: list[dict[str, Any]], advances: list[dict[str,
             elif advance.get("action") == "COMPLETADO" and changed_on:
                 end_col = raw_column_name(row, ["fecha fin", "fecha vencimiento", "vencimiento", "fin", "due"]) or "Fecha fin"
                 row[end_col] = changed_on
+                start_col = raw_column_name(row, ["fecha inicio", "inicio", "start"]) or "Fecha inicio"
+                if not str(row.get(start_col) or "").strip():
+                    row[start_col] = changed_on
 
         if "OT" in row:
             row["OT"] = ot_text(row.get("OT"))
@@ -742,6 +748,8 @@ def main() -> None:
         if task_id in pending_changes:
             df.at[index, "Estado"] = pending_changes[task_id]
             df.at[index, "Seleccionar"] = True
+            if pending_changes[task_id] == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
+                df.at[index, "Fecha inicio"] = date.today().strftime("%d/%m/%Y")
 
     editor_state = st.session_state.get("task_editor", {})
     if isinstance(editor_state, dict):
@@ -759,6 +767,8 @@ def main() -> None:
                         df.at[index, "Seleccionar"] = True
                         task_id = str(df.at[index, "_task_id"])
                         pending_changes[task_id] = new_status
+                        if new_status == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
+                            df.at[index, "Fecha inicio"] = date.today().strftime("%d/%m/%Y")
     edited = st.data_editor(
         df,
         hide_index=True,
