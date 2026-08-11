@@ -20,6 +20,7 @@ SECTORS = ["", "Electricidad", "Mecanica", "Instrumentacion", "Otros"]
 GENERATION_SECTORS = {"electricidad", "mecanica", "instrumentacion"}
 STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE"]
 REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
+HIDE_AFTER_SAVE_ACTIONS = {"COMPLETADO", "REPLANIFICAR"}
 REASONS = [
     "",
     "Pedido Sup PAE",
@@ -508,6 +509,10 @@ def apply_filters(tasks: list[dict[str, Any]], company: str, sector: str, crew: 
     crew = scope_value(crew)
     start_iso = start.isoformat() if start else ""
     end_iso = end.isoformat() if end else ""
+    if start_iso and not end_iso:
+        end_iso = start_iso
+    elif end_iso and not start_iso:
+        start_iso = end_iso
     text_norm = normalize(text)
     for task in tasks:
         if company:
@@ -524,11 +529,17 @@ def apply_filters(tasks: list[dict[str, Any]], company: str, sector: str, crew: 
                 continue
         if crew and normalize_crew(task.get("cuadrilla")) != normalize_crew(crew):
             continue
-        task_start = task.get("fecha_inicio") or ""
-        if start_iso and task_start and task_start < start_iso:
-            continue
-        if end_iso and task_start and task_start > end_iso:
-            continue
+        if start_iso or end_iso:
+            task_start = str(task.get("fecha_inicio") or "").strip()
+            task_end = str(task.get("fecha_fin") or "").strip()
+            if task_start and not task_end:
+                task_end = task_start
+            elif task_end and not task_start:
+                task_start = task_end
+            if not task_start and not task_end:
+                continue
+            if task_start > end_iso or task_end < start_iso:
+                continue
         haystack = normalize(" ".join(str(task.get(key) or "") for key in ["nro_ot", "tarea", "cuadrilla", "ubicacion_tecnica", "kks_tag"]))
         haystack = normalize(f"{haystack} {task_title(task)}")
         if text_norm and text_norm not in haystack:
@@ -571,6 +582,11 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
             }
         )
     return pd.DataFrame(rows)
+
+
+def hide_task_after_saved(task: dict[str, Any], latest: dict[str, dict[str, Any]]) -> bool:
+    advance = latest.get(task["id"], {})
+    return str(advance.get("action") or "").strip().upper() in HIDE_AFTER_SAVE_ACTIONS
 
 
 def format_date(value: Any) -> str:
@@ -901,11 +917,22 @@ def main() -> None:
     start = col2.date_input("Fecha inicio", value=None, format="DD/MM/YYYY", key="start_filter")
     end = col3.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
     text = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG", key="text_filter")
+    show_all_tasks = st.checkbox("Mostrar todas las tareas", value=False, key="show_all_tasks_filter")
 
-    filtered = apply_filters(tasks, company, sector, crew, start, end, text)
-    st.caption(f"{len(filtered)} tarea(s) visibles de {len(scoped_tasks)} cargadas para el perfil seleccionado.")
+    filtered_base = apply_filters(tasks, company, sector, crew, start, end, text)
+    if show_all_tasks:
+        filtered = filtered_base
+    else:
+        filtered = [task for task in filtered_base if not hide_task_after_saved(task, latest)]
+    hidden_count = len(filtered_base) - len(filtered)
+    caption = f"{len(filtered)} tarea(s) visibles de {len(scoped_tasks)} cargadas para el perfil seleccionado."
+    if hidden_count:
+        caption += f" {hidden_count} completada(s) o a replanificar ocultas."
+    st.caption(caption)
     visible_task_ids = {task["id"] for task in filtered}
     filtered_advances = [advance for advance in advances if advance.get("task_id") in visible_task_ids]
+    scoped_task_ids = {task["id"] for task in scoped_tasks}
+    scoped_advances = [advance for advance in advances if advance.get("task_id") in scoped_task_ids]
 
     pending_changes = st.session_state.setdefault("pending_state_changes", {})
     df = task_dataframe(filtered, latest)
@@ -1110,7 +1137,8 @@ def main() -> None:
                 st.success("Registros del programa eliminados.")
                 st.rerun()
 
-    e1, e2, e3, e4 = st.columns(4)
+    export_columns = st.columns(4 if st.session_state.role == "admin" else 3)
+    e1, e2, e3 = export_columns[:3]
     e1.download_button(
         "Exportar log Excel",
         data=advances_export(filtered, filtered_advances, final_only=False),
@@ -1123,14 +1151,15 @@ def main() -> None:
     )
     e3.download_button(
         "Exportar programa actualizado Excel",
-        data=program_updated_export(filtered, filtered_advances),
+        data=program_updated_export(scoped_tasks, scoped_advances),
         file_name=f"programa_actualizado_{date.today().isoformat()}.xlsx",
     )
-    e4.download_button(
-        "Exportar avances para Wrike",
-        data=wrike_advances_export(filtered, filtered_advances),
-        file_name="avances_cuadrillas_wrike.xlsx",
-    )
+    if st.session_state.role == "admin":
+        export_columns[3].download_button(
+            "Exportar avances para Wrike",
+            data=wrike_advances_export(filtered, filtered_advances),
+            file_name="avances_cuadrillas_wrike.xlsx",
+        )
 
 
 if __name__ == "__main__":
