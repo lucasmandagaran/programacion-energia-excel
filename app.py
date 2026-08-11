@@ -28,6 +28,16 @@ REASONS = [
     "Cuadrilla no operativa",
     "Otros",
 ]
+OT_COLUMNS = ["ot", "ots", "orden", "ordenes", "orden de trabajo", "nro ot", "nro de ot", "nro. de ot", "numero ot", "numero de ot", "nrodeot", "nroot"]
+TITLE_COLUMNS = ["title", "titulo", "titulo tarea", "titulo de tarea", "trabajo", "tarea", "descripcion", "description", "texto breve", "textobreve", "nombre", "nombre tarea"]
+COMPANY_COLUMNS = ["empresa", "contratista", "compania", "cia"]
+SECTOR_COLUMNS = ["sector", "especialidad", "disciplina", "puesto de trabajo"]
+CREW_COLUMNS = ["cuadrilla", "cuadrillas", "cuadrilla gen", "cuadrillagen", "crew", "recurso", "recursos"]
+START_DATE_COLUMNS = ["fecha inicio", "fecha inic", "fecha ini", "inicio", "start", "fecha programada", "fechaprogramada"]
+END_DATE_COLUMNS = ["fecha fin", "fecha vencimiento", "vencimiento", "fin", "due", "fecha cierre", "cierre"]
+STATUS_COLUMNS = ["estado", "status", "estado actual", "status de usuario", "avance"]
+LOCATION_COLUMNS = ["ubicacion tecnica", "ubicacion", "ubic tecnica", "ubic. tecnica", "ubictecnica", "objeto ubicacion", "objetoubicacion"]
+KKS_COLUMNS = ["kks tag", "kks-tag", "kks/tag", "kks", "tag", "kkstag", "kks tag ubicacion", "kkstagubicacion"]
 
 
 def option_label(value: str, empty_label: str) -> str:
@@ -66,6 +76,10 @@ def normalize(value: Any) -> str:
     )
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def compact_key(value: Any) -> str:
+    return normalize(value).replace(" ", "")
 
 
 def normalize_crew(value: Any) -> str:
@@ -264,12 +278,19 @@ def logout_controls() -> None:
 
 def find_column(columns: list[str], candidates: list[str]) -> str | None:
     normalized = {normalize(column): column for column in columns}
+    compact = {compact_key(column): column for column in columns}
     for candidate in candidates:
         wanted = normalize(candidate)
         if wanted in normalized:
             return normalized[wanted]
+        compact_wanted = compact_key(candidate)
+        if compact_wanted in compact:
+            return compact[compact_wanted]
     for norm, original in normalized.items():
         if any(normalize(candidate) in norm for candidate in candidates):
+            return original
+    for norm, original in compact.items():
+        if any(compact_key(candidate) in norm for candidate in candidates):
             return original
     return None
 
@@ -322,8 +343,12 @@ def raw_value(task: dict[str, Any], candidates: list[str]) -> str:
     if not isinstance(raw, dict):
         return ""
     normalized = {normalize(key): value for key, value in raw.items()}
+    compact = {compact_key(key): value for key, value in raw.items()}
     for candidate in candidates:
         value = normalized.get(normalize(candidate))
+        if value not in (None, ""):
+            return str(value).strip()
+        value = compact.get(compact_key(candidate))
         if value not in (None, ""):
             return str(value).strip()
     for key, value in normalized.items():
@@ -331,36 +356,35 @@ def raw_value(task: dict[str, Any], candidates: list[str]) -> str:
             continue
         if any(normalize(candidate) in key for candidate in candidates):
             return str(value).strip()
+    for key, value in compact.items():
+        if value in (None, ""):
+            continue
+        if any(compact_key(candidate) in key for candidate in candidates):
+            return str(value).strip()
     return ""
 
 
 def raw_column_name(raw: dict[str, Any], candidates: list[str]) -> str | None:
     normalized = {normalize(column): column for column in raw.keys()}
+    compact = {compact_key(column): column for column in raw.keys()}
     for candidate in candidates:
         wanted = normalize(candidate)
         if wanted in normalized:
             return normalized[wanted]
+        compact_wanted = compact_key(candidate)
+        if compact_wanted in compact:
+            return compact[compact_wanted]
     for norm, original in normalized.items():
         if any(normalize(candidate) in norm for candidate in candidates):
+            return original
+    for norm, original in compact.items():
+        if any(compact_key(candidate) in norm for candidate in candidates):
             return original
     return None
 
 
 def task_title(task: dict[str, Any]) -> str:
-    title = raw_value(
-        task,
-        [
-            "title",
-            "titulo",
-            "titulo tarea",
-            "titulo de tarea",
-            "descripcion",
-            "descripcion tarea",
-            "description",
-            "task title",
-            "nombre tarea",
-        ],
-    )
+    title = raw_value(task, TITLE_COLUMNS)
     if title:
         return title
     return str(task.get("tarea") or "").strip()
@@ -369,16 +393,16 @@ def task_title(task: dict[str, Any]) -> str:
 def map_excel(df: pd.DataFrame) -> list[dict[str, Any]]:
     columns = list(df.columns)
     mapping = {
-        "nro_ot": find_column(columns, ["nro ot", "nro de ot", "numero ot", "ot", "orden"]),
-        "tarea": find_column(columns, ["trabajo", "tarea", "descripcion", "nombre", "titulo"]),
-        "empresa": find_column(columns, ["empresa", "contratista"]),
-        "sector": find_column(columns, ["sector", "especialidad", "disciplina"]),
-        "cuadrilla": find_column(columns, ["cuadrilla", "crew", "recurso"]),
-        "fecha_inicio": find_column(columns, ["fecha inicio", "inicio", "start"]),
-        "fecha_fin": find_column(columns, ["fecha fin", "fecha vencimiento", "vencimiento", "fin", "due"]),
-        "estado_programa": find_column(columns, ["estado", "status", "estado actual"]),
-        "ubicacion_tecnica": find_column(columns, ["ubicacion tecnica", "ubicacion", "ubic tecnica"]),
-        "kks_tag": find_column(columns, ["kks tag", "kks-tag", "kks", "tag"]),
+        "nro_ot": find_column(columns, OT_COLUMNS),
+        "tarea": find_column(columns, TITLE_COLUMNS),
+        "empresa": find_column(columns, COMPANY_COLUMNS),
+        "sector": find_column(columns, SECTOR_COLUMNS),
+        "cuadrilla": find_column(columns, CREW_COLUMNS),
+        "fecha_inicio": find_column(columns, START_DATE_COLUMNS),
+        "fecha_fin": find_column(columns, END_DATE_COLUMNS),
+        "estado_programa": find_column(columns, STATUS_COLUMNS),
+        "ubicacion_tecnica": find_column(columns, LOCATION_COLUMNS),
+        "kks_tag": find_column(columns, KKS_COLUMNS),
     }
     tasks: list[dict[str, Any]] = []
     for _, row in df.iterrows():
@@ -632,6 +656,107 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
     return write_excel(rows, sheet_name="Avances")
 
 
+def status_usuario_for_wrike(action: str) -> str:
+    mapping = {
+        "EN CURSO": "EN CURSO",
+        "COMPLETADO": "COMPLETADO",
+        "REPLANIFICAR": "ON HOLD",
+        "EN ESPERA": "ON HOLD",
+        "SIN AVANCE": "SIN AVANCE",
+    }
+    return mapping.get(str(action or "").strip().upper(), str(action or "").strip())
+
+
+def _date_changed(original: Any, updated: str) -> bool:
+    if not updated:
+        return False
+    original_iso = parse_date(original)
+    updated_iso = parse_date(updated)
+    if not original_iso:
+        return bool(updated_iso)
+    return bool(updated_iso and original_iso != updated_iso)
+
+
+def wrike_dates_for_advance(task: dict[str, Any], advance: dict[str, Any]) -> tuple[str, str, str]:
+    action = str(advance.get("action") or "").strip().upper()
+    start_date = format_date(task.get("fecha_inicio"))
+    end_date = format_date(task.get("fecha_fin"))
+    change_date = advance_date(advance.get("created_at"))
+    changed = False
+
+    if action == "EN CURSO" and change_date:
+        changed = _date_changed(task.get("fecha_inicio"), change_date)
+        start_date = change_date
+    elif action == "COMPLETADO" and change_date:
+        changed = _date_changed(task.get("fecha_fin"), change_date)
+        end_date = change_date
+        if not start_date:
+            start_date = change_date
+            changed = True
+
+    program_change = "Cambia fecha de tarea" if changed else ""
+    return start_date, end_date, program_change
+
+
+def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]]) -> bytes:
+    tasks_by_id = {task["id"]: task for task in tasks}
+    latest = latest_status_by_task(advances)
+    rows = []
+    for task_id, advance in latest.items():
+        task = tasks_by_id.get(task_id)
+        if not task:
+            continue
+        order = ot_text(task.get("nro_ot"))
+        if not order:
+            continue
+        action = str(advance.get("action") or "").strip()
+        if not action or action == "COMENTARIO":
+            continue
+        start_date, end_date, program_change = wrike_dates_for_advance(task, advance)
+        wrike_status = status_usuario_for_wrike(action)
+        rows.append(
+            {
+                "Orden": order,
+                "Status de usuario": wrike_status,
+                "Estado Wrike sugerido": wrike_status,
+                "Modificaciones programa": program_change,
+                "Avance app": action,
+                "Motivo": advance.get("reason", ""),
+                "Comentario": advance.get("observation", ""),
+                "Fecha avance": advance_date(advance.get("created_at")),
+                "Hora avance": advance_time(advance.get("created_at")),
+                "Fecha inicio": start_date,
+                "Fecha fin": end_date,
+                "Texto breve": task_title(task),
+                "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
+                "Cuadrilla": task.get("cuadrilla", ""),
+                "KKS/TAG": task.get("kks_tag", ""),
+                "Informado por": advance.get("reporter_name", ""),
+                "Empresa informante": advance.get("reporter_company", ""),
+            }
+        )
+    columns = [
+        "Orden",
+        "Status de usuario",
+        "Estado Wrike sugerido",
+        "Modificaciones programa",
+        "Avance app",
+        "Motivo",
+        "Comentario",
+        "Fecha avance",
+        "Hora avance",
+        "Fecha inicio",
+        "Fecha fin",
+        "Texto breve",
+        "Ubicacion tecnica",
+        "Cuadrilla",
+        "KKS/TAG",
+        "Informado por",
+        "Empresa informante",
+    ]
+    return write_excel(rows, columns=columns, sheet_name="Wrike avances")
+
+
 def advance_date(value: Any) -> str:
     if not value:
         return ""
@@ -706,24 +831,24 @@ def program_updated_export(tasks: list[dict[str, Any]], advances: list[dict[str,
 
         advance = latest.get(task["id"])
         if advance:
-            state_col = raw_column_name(row, ["estado", "status", "estado actual"]) or "Estado"
+            state_col = raw_column_name(row, STATUS_COLUMNS) or "Estado"
             row[state_col] = advance.get("action", "")
 
             changed_on = advance_date(advance.get("created_at"))
             if advance.get("action") == "EN CURSO" and changed_on:
-                start_col = raw_column_name(row, ["fecha inicio", "inicio", "start"]) or "Fecha inicio"
+                start_col = raw_column_name(row, START_DATE_COLUMNS) or "Fecha inicio"
                 row[start_col] = changed_on
             elif advance.get("action") == "COMPLETADO" and changed_on:
-                end_col = raw_column_name(row, ["fecha fin", "fecha vencimiento", "vencimiento", "fin", "due"]) or "Fecha fin"
+                end_col = raw_column_name(row, END_DATE_COLUMNS) or "Fecha fin"
                 row[end_col] = changed_on
-                start_col = raw_column_name(row, ["fecha inicio", "inicio", "start"]) or "Fecha inicio"
+                start_col = raw_column_name(row, START_DATE_COLUMNS) or "Fecha inicio"
                 if not str(row.get(start_col) or "").strip():
                     row[start_col] = changed_on
 
         if "OT" in row:
             row["OT"] = ot_text(row.get("OT"))
         else:
-            nro_col = raw_column_name(row, ["nro ot", "nro de ot", "numero ot", "ot", "orden"])
+            nro_col = raw_column_name(row, OT_COLUMNS)
             if nro_col:
                 row[nro_col] = ot_text(row.get(nro_col))
 
@@ -985,7 +1110,7 @@ def main() -> None:
                 st.success("Registros del programa eliminados.")
                 st.rerun()
 
-    e1, e2, e3 = st.columns(3)
+    e1, e2, e3, e4 = st.columns(4)
     e1.download_button(
         "Exportar log Excel",
         data=advances_export(filtered, filtered_advances, final_only=False),
@@ -1000,6 +1125,11 @@ def main() -> None:
         "Exportar programa actualizado Excel",
         data=program_updated_export(filtered, filtered_advances),
         file_name=f"programa_actualizado_{date.today().isoformat()}.xlsx",
+    )
+    e4.download_button(
+        "Exportar avances para Wrike",
+        data=wrike_advances_export(filtered, filtered_advances),
+        file_name=f"avances_para_wrike_{date.today().isoformat()}.xlsx",
     )
 
 
