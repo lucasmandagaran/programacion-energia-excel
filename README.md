@@ -29,8 +29,8 @@ Esta version no usa Wrike. El flujo es:
 ```toml
 SUPABASE_URL = "https://xxxxxxxxxxxxxxxxxxxx.supabase.co"
 SUPABASE_KEY = "sb_publishable_xxxxxxxxxxxxxxxxxxxx"
-ACCESS_PASSWORD = "Energia2026"
-ADMIN_PASSWORD = "36719317"
+ACCESS_PASSWORD = "CAMBIAR_ESTA_CLAVE"
+ADMIN_PASSWORD = "CAMBIAR_ESTA_CLAVE_ADMIN"
 ```
 
 ## Excel

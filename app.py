@@ -103,12 +103,20 @@ def secret(name: str, default: str = "") -> str:
         return str(os.getenv(name, "") or default)
 
 
+def required_secret(name: str) -> str:
+    value = secret(name)
+    if not value:
+        st.error(f"Falta configurar {name} en Streamlit Secrets.")
+        st.stop()
+    return value
+
+
 SUPABASE_URL = secret("SUPABASE_URL").rstrip("/")
 if SUPABASE_URL.endswith("/rest/v1"):
     SUPABASE_URL = SUPABASE_URL[: -len("/rest/v1")]
 SUPABASE_KEY = secret("SUPABASE_KEY")
-ACCESS_PASSWORD = secret("ACCESS_PASSWORD", "Energia2026")
-ADMIN_PASSWORD = secret("ADMIN_PASSWORD", "36719317")
+ACCESS_PASSWORD = required_secret("ACCESS_PASSWORD")
+ADMIN_PASSWORD = required_secret("ADMIN_PASSWORD")
 
 
 st.set_page_config(page_title=APP_TITLE, page_icon="PE", layout="wide")
