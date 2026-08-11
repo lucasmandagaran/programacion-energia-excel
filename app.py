@@ -46,20 +46,12 @@ STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVA
 REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
 HIDE_AFTER_SAVE_ACTIONS = {"COMPLETADO", "REPLANIFICAR"}
 STATE_ROW_STYLES = {
-    "COMPLETADO": "background-color: rgba(36, 161, 72, 0.28); color: #d8ffe4; font-weight: 700;",
-    "EN CURSO": "background-color: rgba(31, 111, 235, 0.24); color: #dcebff; font-weight: 700;",
-    "EN ESPERA": "background-color: rgba(214, 158, 46, 0.28); color: #fff4d5; font-weight: 700;",
-    "REPLANIFICAR": "background-color: rgba(248, 81, 73, 0.28); color: #ffe0df; font-weight: 700;",
-    "COMENTARIO": "background-color: rgba(137, 87, 229, 0.18); color: #eee4ff; font-weight: 700;",
-    "SIN AVANCE": "background-color: rgba(139, 148, 158, 0.12); color: #f0f3f6;",
-}
-STATE_CELL_STYLES = {
-    "COMPLETADO": "background-color: rgba(46, 204, 113, 0.55); color: #ffffff; font-weight: 800; border: 1px solid rgba(46, 204, 113, 0.9);",
-    "EN CURSO": "background-color: rgba(31, 111, 235, 0.52); color: #ffffff; font-weight: 800; border: 1px solid rgba(79, 140, 255, 0.9);",
-    "EN ESPERA": "background-color: rgba(214, 158, 46, 0.58); color: #ffffff; font-weight: 800; border: 1px solid rgba(240, 190, 70, 0.95);",
-    "REPLANIFICAR": "background-color: rgba(248, 81, 73, 0.58); color: #ffffff; font-weight: 800; border: 1px solid rgba(255, 118, 111, 0.95);",
-    "COMENTARIO": "background-color: rgba(137, 87, 229, 0.42); color: #ffffff; font-weight: 800; border: 1px solid rgba(174, 132, 255, 0.9);",
-    "SIN AVANCE": "background-color: rgba(139, 148, 158, 0.24); color: #ffffff; font-weight: 700; border: 1px solid rgba(139, 148, 158, 0.5);",
+    "COMPLETADO": "background-color: rgba(36, 161, 72, 0.30); color: #f2fff5; font-weight: 700;",
+    "EN CURSO": "background-color: rgba(31, 111, 235, 0.28); color: #f2f7ff; font-weight: 700;",
+    "EN ESPERA": "background-color: rgba(214, 158, 46, 0.30); color: #fff8e5; font-weight: 700;",
+    "REPLANIFICAR": "background-color: rgba(248, 81, 73, 0.30); color: #fff0ef; font-weight: 700;",
+    "COMENTARIO": "background-color: rgba(137, 87, 229, 0.22); color: #f6efff; font-weight: 700;",
+    "SIN AVANCE": "background-color: rgba(139, 148, 158, 0.14); color: #f0f3f6;",
 }
 REASONS = [
     "",
@@ -901,6 +893,7 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
             {
                 "Seleccionar": False,
                 "Titulo tarea": task_title(task),
+                "Color": " ",
                 "Estado": status,
                 "Fecha inicio": display_start,
                 "Duracion": f"{task.get('duracion') or 1} dia(s)",
@@ -918,16 +911,13 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
 def task_status_style(row: pd.Series) -> list[str]:
     status = str(row.get("Estado") or "").strip().upper()
     row_style = STATE_ROW_STYLES.get(status, "")
-    cell_style = STATE_CELL_STYLES.get(status, row_style)
-    return [cell_style if column == "Estado" else row_style for column in row.index]
+    return [row_style for _ in row]
 
 
 def record_status_style(row: pd.Series) -> list[str]:
     state_column = "Estado final" if "Estado final" in row.index else "Estado"
     status = str(row.get(state_column) or "").strip().upper()
-    row_style = STATE_ROW_STYLES.get(status, "")
-    cell_style = STATE_CELL_STYLES.get(status, row_style)
-    return [cell_style if column == state_column else row_style for column in row.index]
+    return [STATE_ROW_STYLES.get(status, "") for _ in row]
 
 
 def hide_task_after_saved(task: dict[str, Any], latest: dict[str, dict[str, Any]]) -> bool:
@@ -1416,6 +1406,7 @@ def main() -> None:
             "_task_id": None,
             "_estado_original": None,
             "Seleccionar": st.column_config.CheckboxColumn("Sel."),
+            "Color": st.column_config.TextColumn("", width="small"),
             "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True),
         },
         key="task_editor",
