@@ -385,18 +385,22 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
     rows = []
     for task in tasks:
         advance = latest.get(task["id"], {})
+        status = advance.get("action") or task.get("estado_programa") or "SIN AVANCE"
+        if status not in ACTIONS:
+            status = "SIN AVANCE"
         rows.append(
             {
                 "Seleccionar": False,
                 "Trabajo": task.get("tarea") or "",
                 "Fecha inicio": format_date(task.get("fecha_inicio")),
                 "Duracion": f"{task.get('duracion') or 1} dia(s)",
-                "Estado": advance.get("action") or task.get("estado_programa") or "SIN AVANCE",
+                "Estado": status,
                 "Cuadrilla": task.get("cuadrilla") or "",
                 "OT": task.get("nro_ot") or "",
                 "Ubicacion tecnica": task.get("ubicacion_tecnica") or "",
                 "KKS/TAG": task.get("kks_tag") or "",
                 "_task_id": task["id"],
+                "_estado_original": status,
             }
         )
     return pd.DataFrame(rows)
@@ -425,6 +429,24 @@ def save_advances(program_id: str, task_ids: list[str], action: str, reason: str
             "reporter_sector": profile.get("sector") or "",
         }
         for task_id in task_ids
+    ]
+    sb_insert("advances", rows)
+
+
+def save_advance_entries(program_id: str, entries: list[dict[str, str]], reason: str, observation: str) -> None:
+    profile = st.session_state.profile
+    rows = [
+        {
+            "program_id": program_id,
+            "task_id": entry["task_id"],
+            "action": entry["action"],
+            "reason": reason if entry["action"] == "EN ESPERA" else "",
+            "observation": observation,
+            "reporter_name": profile["name"],
+            "reporter_company": profile.get("company") or "",
+            "reporter_sector": profile.get("sector") or "",
+        }
+        for entry in entries
     ]
     sb_insert("advances", rows)
 
@@ -494,50 +516,86 @@ def main() -> None:
     latest = latest_status_by_task(advances)
 
     profile = st.session_state.profile
-    companies = [""] + sorted({task.get("empresa") or "" for task in tasks if task.get("empresa")})
-    sectors = [""] + sorted({task.get("sector") or "" for task in tasks if task.get("sector")})
-    crews = [""] + sorted({task.get("cuadrilla") or "" for task in tasks if task.get("cuadrilla")})
+    company = profile.get("company") or ""
+    sector = profile.get("sector") or ""
+    scoped_tasks = apply_filters(tasks, company, sector, "", None, None, "")
+    crews = [""] + sorted({task.get("cuadrilla") or "" for task in scoped_tasks if task.get("cuadrilla")})
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    company = col1.selectbox("Empresa", companies, index=companies.index(profile.get("company")) if profile.get("company") in companies else 0)
-    sector = col2.selectbox("Sector", sectors, index=sectors.index(profile.get("sector")) if profile.get("sector") in sectors else 0)
-    crew = col3.selectbox("Cuadrilla", crews)
-    start = col4.date_input("Fecha inicio", value=None, format="DD/MM/YYYY")
-    end = col5.date_input("Fecha fin", value=None, format="DD/MM/YYYY")
+    col1, col2, col3 = st.columns(3)
+    crew = col1.selectbox("Cuadrilla", crews)
+    start = col2.date_input("Fecha inicio", value=None, format="DD/MM/YYYY")
+    end = col3.date_input("Fecha fin", value=None, format="DD/MM/YYYY")
     text = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG")
 
     filtered = apply_filters(tasks, company, sector, crew, start, end, text)
-    st.caption(f"{len(filtered)} tarea(s) visibles de {len(tasks)} cargadas.")
+    st.caption(f"{len(filtered)} tarea(s) visibles de {len(scoped_tasks)} cargadas para el perfil seleccionado.")
 
     df = task_dataframe(filtered, latest)
+    editor_state = st.session_state.get("task_editor", {})
+    if isinstance(editor_state, dict):
+        for row_index, changes in editor_state.get("edited_rows", {}).items():
+            if "Estado" in changes:
+                try:
+                    index = int(row_index)
+                except Exception:
+                    continue
+                if 0 <= index < len(df):
+                    df.at[index, "Estado"] = changes["Estado"]
+                    df.at[index, "Seleccionar"] = True
     edited = st.data_editor(
         df,
         hide_index=True,
         use_container_width=True,
-        disabled=[column for column in df.columns if column != "Seleccionar"],
-        column_config={"_task_id": None, "Seleccionar": st.column_config.CheckboxColumn("Sel.")},
+        disabled=[column for column in df.columns if column not in {"Seleccionar", "Estado"}],
+        column_config={
+            "_task_id": None,
+            "_estado_original": None,
+            "Seleccionar": st.column_config.CheckboxColumn("Sel."),
+            "Estado": st.column_config.SelectboxColumn("Estado", options=ACTIONS, required=True),
+        },
         key="task_editor",
     )
-    selected_ids = edited.loc[edited["Seleccionar"] == True, "_task_id"].tolist() if not edited.empty else []
+    if edited.empty:
+        selected_rows = edited
+    else:
+        changed_rows = edited["Estado"] != edited["_estado_original"]
+        selected_rows = edited.loc[(edited["Seleccionar"] == True) | changed_rows].copy()
+    selected_ids = selected_rows["_task_id"].tolist() if not selected_rows.empty else []
 
     st.subheader("Informar seleccionadas")
     c1, c2, c3 = st.columns([1, 1, 2])
-    action = c1.selectbox("Avance", ACTIONS)
+    action = c1.selectbox("Avance por defecto", ACTIONS)
+    if selected_rows.empty:
+        selected_actions: list[str] = []
+    else:
+        selected_actions = [
+            row["Estado"] if row["Estado"] != row["_estado_original"] else action
+            for _, row in selected_rows.iterrows()
+        ]
     reason = ""
-    if action == "EN ESPERA":
+    if "EN ESPERA" in selected_actions:
         reason = c2.selectbox("Motivo", WAIT_REASONS)
-    observation_required = action in {"REPLANIFICAR", "COMENTARIO"} or action == "EN ESPERA"
+    observation_required = any(item in {"REPLANIFICAR", "COMENTARIO"} for item in selected_actions) or (
+        "EN ESPERA" in selected_actions and reason == "Otros"
+    )
     observation = c3.text_input(
         "Comentario comun" if observation_required else "Comentario opcional",
         placeholder="Se aplicara a todas las tareas seleccionadas",
     )
     if st.button("Guardar avance para seleccionadas", type="primary", disabled=not selected_ids):
-        if action == "EN ESPERA" and not reason:
+        if "EN ESPERA" in selected_actions and not reason:
             st.warning("Elegir motivo para EN ESPERA.")
         elif observation_required and not observation.strip():
             st.warning("Escribir el comentario comun para las tareas seleccionadas.")
         else:
-            save_advances(program["id"], selected_ids, action, reason, observation.strip())
+            entries = [
+                {
+                    "task_id": row["_task_id"],
+                    "action": row["Estado"] if row["Estado"] != row["_estado_original"] else action,
+                }
+                for _, row in selected_rows.iterrows()
+            ]
+            save_advance_entries(program["id"], entries, reason, observation.strip())
             st.success(f"{len(selected_ids)} avance(s) guardado(s).")
             st.rerun()
 
