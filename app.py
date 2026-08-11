@@ -894,9 +894,8 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
         rows.append(
             {
                 "Seleccionar": False,
-                "Titulo tarea": task_title(task),
-                "Color": " ",
                 "Estado": status,
+                "Titulo tarea": task_title(task),
                 "Fecha inicio": display_start,
                 "Duracion": f"{task.get('duracion') or 1} dia(s)",
                 "Cuadrilla": task.get("cuadrilla") or "",
@@ -1412,16 +1411,14 @@ def main() -> None:
                         st.session_state.pending_program_id = program["id"]
                         if new_status == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
                             df.at[index, "Fecha inicio"] = local_today().strftime("%d/%m/%Y")
+    visible_df = df.drop(columns=["_task_id", "_estado_original"], errors="ignore")
     edited = st.data_editor(
-        df.style.apply(task_status_style, axis=1),
+        visible_df.style.apply(task_status_style, axis=1),
         hide_index=True,
         use_container_width=True,
-        disabled=[column for column in df.columns if column not in {"Seleccionar", "Estado"}],
+        disabled=[column for column in visible_df.columns if column not in {"Seleccionar", "Estado"}],
         column_config={
-            "_task_id": None,
-            "_estado_original": None,
             "Seleccionar": st.column_config.CheckboxColumn("Sel."),
-            "Color": st.column_config.TextColumn("", width="small"),
             "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True),
         },
         key="task_editor",
@@ -1429,16 +1426,22 @@ def main() -> None:
     if edited.empty:
         selected_task_ids: list[str] = []
     else:
-        for _, row in edited.iterrows():
-            task_id = str(row["_task_id"])
+        for index, row in edited.iterrows():
+            if index not in df.index:
+                continue
+            task_id = str(df.at[index, "_task_id"])
             status = str(row["Estado"] or "")
-            original_status = str(row["_estado_original"] or "")
+            original_status = str(df.at[index, "_estado_original"] or "")
             if status and status != original_status:
                 pending_changes[task_id] = status
                 st.session_state.pending_program_id = program["id"]
             elif task_id in pending_changes:
                 pending_changes.pop(task_id, None)
-        selected_task_ids = [str(item) for item in edited.loc[edited["Seleccionar"] == True, "_task_id"].tolist()]
+        selected_task_ids = [
+            str(df.at[index, "_task_id"])
+            for index in edited.index[edited["Seleccionar"] == True].tolist()
+            if index in df.index
+        ]
     pending_visible_ids = sorted(task_id for task_id in pending_changes if task_id in visible_task_ids)
     pending_all_ids = sorted(pending_changes)
 
