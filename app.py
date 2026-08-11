@@ -975,10 +975,10 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
         start_date = format_date(task.get("fecha_inicio"))
         end_date = format_date(task.get("fecha_fin"))
         program_change = ""
-        wrike_status = ""
+        display_status = action
         if final_only:
             start_date, end_date, program_change = wrike_dates_for_advance(task, advance)
-            wrike_status = status_usuario_for_wrike(action)
+            display_status = status_usuario_for_wrike(action)
         rows.append(
             {
                 "OT": ot_text(task.get("nro_ot")),
@@ -991,11 +991,9 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
                 "Fecha inicio": start_date,
                 "Fecha fin": end_date,
                 "Duracion": task.get("duracion", ""),
-                "Estado": action,
+                "Estado": display_status,
                 **(
                     {
-                        "Status de usuario": wrike_status,
-                        "Estado Wrike sugerido": wrike_status,
                         "Modificaciones programa": program_change,
                     }
                     if final_only
@@ -1073,10 +1071,8 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
         rows.append(
             {
                 "Orden": order,
-                "Status de usuario": wrike_status,
-                "Estado Wrike sugerido": wrike_status,
+                "Estado": wrike_status,
                 "Modificaciones programa": program_change,
-                "Avance app": action,
                 "Comentario": combined_comment(advance),
                 "Fecha avance": advance_date(advance.get("created_at")),
                 "Hora avance": advance_time(advance.get("created_at")),
@@ -1092,10 +1088,8 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
         )
     columns = [
         "Orden",
-        "Status de usuario",
-        "Estado Wrike sugerido",
+        "Estado",
         "Modificaciones programa",
-        "Avance app",
         "Comentario",
         "Fecha avance",
         "Hora avance",
