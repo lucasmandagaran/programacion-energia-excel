@@ -383,7 +383,15 @@ def require_session() -> None:
         profile_screen()
 
 
-FILTER_KEYS = ["program_filter", "crew_filter", "start_filter", "end_filter", "text_filter", "show_all_tasks_filter"]
+FILTER_KEYS = [
+    "program_filter",
+    "sector_filter",
+    "crew_filter",
+    "start_filter",
+    "end_filter",
+    "text_filter",
+    "show_all_tasks_filter",
+]
 
 
 def has_pending_work() -> bool:
@@ -406,6 +414,7 @@ def current_filter_state(program_id: str) -> dict[str, Any]:
     return {
         "program_id": program_id,
         "program_filter": st.session_state.get("program_filter"),
+        "sector_filter": st.session_state.get("sector_filter", ""),
         "crew_filter": st.session_state.get("crew_filter", ""),
         "start_filter": st.session_state.get("start_filter"),
         "end_filter": st.session_state.get("end_filter"),
@@ -742,11 +751,27 @@ def admin_panel() -> None:
                 st.rerun()
 
 
-def apply_filters(tasks: list[dict[str, Any]], company: str, sector: str, crew: str, start: Any, end: Any, text: str) -> list[dict[str, Any]]:
+def selected_crews(value: Any) -> set[str]:
+    if not value:
+        return set()
+    if isinstance(value, (list, tuple, set)):
+        return {normalize_crew(item) for item in value if str(item or "").strip()}
+    return {normalize_crew(value)}
+
+
+def apply_filters(
+    tasks: list[dict[str, Any]],
+    company: str,
+    sector: str,
+    crew: Any,
+    start: Any,
+    end: Any,
+    text: str,
+) -> list[dict[str, Any]]:
     output = []
     company = scope_value(company)
     sector = scope_value(sector)
-    crew = scope_value(crew)
+    crew_values = selected_crews(crew)
     start_iso = start.isoformat() if start else ""
     end_iso = end.isoformat() if end else ""
     if start_iso and not end_iso:
@@ -767,7 +792,7 @@ def apply_filters(tasks: list[dict[str, Any]], company: str, sector: str, crew: 
                     continue
             elif normalize(effective_sector(task)) != normalize(sector):
                 continue
-        if crew and normalize_crew(task.get("cuadrilla")) != normalize_crew(crew):
+        if crew_values and normalize_crew(task.get("cuadrilla")) not in crew_values:
             continue
         if start_iso or end_iso:
             task_start = str(task.get("fecha_inicio") or "").strip()
@@ -1176,12 +1201,24 @@ def main() -> None:
     company = scope_value(profile.get("company"))
     sector = scope_value(profile.get("sector"))
     scoped_tasks = apply_filters(tasks, company, sector, "", None, None, "")
-    crews = [""] + sorted({task.get("cuadrilla") or "" for task in scoped_tasks if task.get("cuadrilla")})
-
-    col1, col2, col3 = st.columns(3)
-    crew = col1.selectbox("Cuadrilla", crews, format_func=lambda item: option_label(item, "Todas"), key="crew_filter")
-    start = col2.date_input("Fecha inicio", value=None, format="DD/MM/YYYY", key="start_filter")
-    end = col3.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
+    inner_sector_options = [""] + sorted(
+        {effective_sector(task) for task in scoped_tasks if effective_sector(task)},
+        key=lambda item: normalize(item),
+    )
+    f1, f2, f3, f4 = st.columns([1, 1.4, 1, 1])
+    inner_sector = f1.selectbox(
+        "Sector",
+        inner_sector_options,
+        format_func=lambda item: option_label(item, "Todos"),
+        key="sector_filter",
+    )
+    tasks_for_crews = apply_filters(scoped_tasks, "", inner_sector, "", None, None, "")
+    crew_options = sorted({task.get("cuadrilla") or "" for task in tasks_for_crews if task.get("cuadrilla")})
+    if "crew_filter" in st.session_state and not isinstance(st.session_state.get("crew_filter"), list):
+        st.session_state.pop("crew_filter", None)
+    crew = f2.multiselect("Cuadrilla", crew_options, placeholder="Todas", key="crew_filter")
+    start = f3.date_input("Fecha inicio", value=None, format="DD/MM/YYYY", key="start_filter")
+    end = f4.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
     text = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG", key="text_filter")
     show_all_tasks = st.checkbox("Mostrar todas las tareas", value=False, key="show_all_tasks_filter")
 
@@ -1199,7 +1236,8 @@ def main() -> None:
             st.session_state.previous_filter_state = filters_before
             st.session_state.last_filter_state = filters_now
 
-    filtered_base = apply_filters(tasks, company, sector, crew, start, end, text)
+    base_sector = inner_sector or sector
+    filtered_base = apply_filters(tasks, company, base_sector, crew, start, end, text)
     if show_all_tasks:
         filtered = filtered_base
     else:
