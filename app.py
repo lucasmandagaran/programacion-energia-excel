@@ -50,7 +50,16 @@ STATE_ROW_STYLES = {
     "EN CURSO": "background-color: rgba(31, 111, 235, 0.24); color: #dcebff; font-weight: 700;",
     "EN ESPERA": "background-color: rgba(214, 158, 46, 0.28); color: #fff4d5; font-weight: 700;",
     "REPLANIFICAR": "background-color: rgba(248, 81, 73, 0.28); color: #ffe0df; font-weight: 700;",
+    "COMENTARIO": "background-color: rgba(137, 87, 229, 0.18); color: #eee4ff; font-weight: 700;",
     "SIN AVANCE": "background-color: rgba(139, 148, 158, 0.12); color: #f0f3f6;",
+}
+STATE_CELL_STYLES = {
+    "COMPLETADO": "background-color: rgba(46, 204, 113, 0.55); color: #ffffff; font-weight: 800; border: 1px solid rgba(46, 204, 113, 0.9);",
+    "EN CURSO": "background-color: rgba(31, 111, 235, 0.52); color: #ffffff; font-weight: 800; border: 1px solid rgba(79, 140, 255, 0.9);",
+    "EN ESPERA": "background-color: rgba(214, 158, 46, 0.58); color: #ffffff; font-weight: 800; border: 1px solid rgba(240, 190, 70, 0.95);",
+    "REPLANIFICAR": "background-color: rgba(248, 81, 73, 0.58); color: #ffffff; font-weight: 800; border: 1px solid rgba(255, 118, 111, 0.95);",
+    "COMENTARIO": "background-color: rgba(137, 87, 229, 0.42); color: #ffffff; font-weight: 800; border: 1px solid rgba(174, 132, 255, 0.9);",
+    "SIN AVANCE": "background-color: rgba(139, 148, 158, 0.24); color: #ffffff; font-weight: 700; border: 1px solid rgba(139, 148, 158, 0.5);",
 }
 REASONS = [
     "",
@@ -908,8 +917,17 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
 
 def task_status_style(row: pd.Series) -> list[str]:
     status = str(row.get("Estado") or "").strip().upper()
-    style = STATE_ROW_STYLES.get(status, "")
-    return [style for _ in row]
+    row_style = STATE_ROW_STYLES.get(status, "")
+    cell_style = STATE_CELL_STYLES.get(status, row_style)
+    return [cell_style if column == "Estado" else row_style for column in row.index]
+
+
+def record_status_style(row: pd.Series) -> list[str]:
+    state_column = "Estado final" if "Estado final" in row.index else "Estado"
+    status = str(row.get(state_column) or "").strip().upper()
+    row_style = STATE_ROW_STYLES.get(status, "")
+    cell_style = STATE_CELL_STYLES.get(status, row_style)
+    return [cell_style if column == state_column else row_style for column in row.index]
 
 
 def hide_task_after_saved(task: dict[str, Any], latest: dict[str, dict[str, Any]]) -> bool:
@@ -1578,7 +1596,10 @@ def main() -> None:
         state_column,
     )
     log = pd.DataFrame([{key: value for key, value in row.items() if key != "_advance_id"} for row in display_log_rows])
-    st.dataframe(log, hide_index=True, use_container_width=True)
+    if log.empty:
+        st.dataframe(log, hide_index=True, use_container_width=True)
+    else:
+        st.dataframe(log.style.apply(record_status_style, axis=1), hide_index=True, use_container_width=True)
 
     if st.session_state.role == "admin" and advances:
         with st.expander("Administracion de registros", expanded=False):
