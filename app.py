@@ -54,6 +54,35 @@ def normalize(value: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def normalize_crew(value: Any) -> str:
+    text = normalize(value).upper().replace(" ", "")
+    text = re.sub(r"(MP|SF|SANFRAN|MANPETROL)$", "", text)
+    return text
+
+
+def infer_company_sector(cuadrilla: Any) -> tuple[str, str]:
+    crew = normalize_crew(cuadrilla)
+    if crew in {"555", "555A"}:
+        return "MANPETROL", "Electricidad"
+    if crew in {"556A", "556B", "556C"}:
+        return "MANPETROL", "Instrumentacion"
+    if crew in {"720", "721", "722", "723", "724"}:
+        return "SAN&FRAN", "Mecanica"
+    return "", "Otros"
+
+
+def effective_company(task: dict[str, Any]) -> str:
+    value = str(task.get("empresa") or "").strip()
+    inferred, _ = infer_company_sector(task.get("cuadrilla"))
+    return value or inferred
+
+
+def effective_sector(task: dict[str, Any]) -> str:
+    value = str(task.get("sector") or "").strip()
+    _, inferred = infer_company_sector(task.get("cuadrilla"))
+    return value or inferred
+
+
 def supabase_headers(prefer: str | None = None) -> dict[str, str]:
     if not SUPABASE_URL or not SUPABASE_KEY:
         st.error("Falta configurar SUPABASE_URL y SUPABASE_KEY en Streamlit Secrets.")
@@ -264,6 +293,10 @@ def map_excel(df: pd.DataFrame) -> list[dict[str, Any]]:
             continue
         start = parse_date(row.get(mapping["fecha_inicio"])) if mapping["fecha_inicio"] else None
         end = parse_date(row.get(mapping["fecha_fin"])) if mapping["fecha_fin"] else None
+        cuadrilla = row_text(row, mapping["cuadrilla"])
+        inferred_company, inferred_sector = infer_company_sector(cuadrilla)
+        empresa = row_text(row, mapping["empresa"]) or inferred_company
+        sector = row_text(row, mapping["sector"]) or inferred_sector
         raw = {str(col): (None if pd.isna(row.get(col)) else str(row.get(col))) for col in columns}
         digest = hashlib.sha1(json.dumps(raw, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         tasks.append(
@@ -271,9 +304,9 @@ def map_excel(df: pd.DataFrame) -> list[dict[str, Any]]:
                 "row_hash": digest,
                 "nro_ot": nro_ot,
                 "tarea": tarea,
-                "empresa": row_text(row, mapping["empresa"]),
-                "sector": row_text(row, mapping["sector"]),
-                "cuadrilla": row_text(row, mapping["cuadrilla"]),
+                "empresa": empresa,
+                "sector": sector,
+                "cuadrilla": cuadrilla,
                 "fecha_inicio": start,
                 "fecha_fin": end,
                 "duracion": duration_days(start, end),
@@ -355,11 +388,11 @@ def apply_filters(tasks: list[dict[str, Any]], company: str, sector: str, crew: 
     end_iso = end.isoformat() if end else ""
     text_norm = normalize(text)
     for task in tasks:
-        if company and normalize(task.get("empresa")) != normalize(company):
+        if company and normalize(effective_company(task)) != normalize(company):
             continue
-        if sector and normalize(task.get("sector")) != normalize(sector):
+        if sector and normalize(effective_sector(task)) != normalize(sector):
             continue
-        if crew and task.get("cuadrilla") != crew:
+        if crew and normalize_crew(task.get("cuadrilla")) != normalize_crew(crew):
             continue
         task_start = task.get("fecha_inicio") or ""
         if start_iso and task_start and task_start < start_iso:
@@ -470,8 +503,8 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
             {
                 "OT": task.get("nro_ot", ""),
                 "Trabajo": task.get("tarea", ""),
-                "Empresa": task.get("empresa", ""),
-                "Sector": task.get("sector", ""),
+                "Empresa": effective_company(task),
+                "Sector": effective_sector(task),
                 "Cuadrilla": task.get("cuadrilla", ""),
                 "KKS/TAG": task.get("kks_tag", ""),
                 "Fecha inicio": format_date(task.get("fecha_inicio")),
