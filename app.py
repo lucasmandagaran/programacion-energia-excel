@@ -122,6 +122,35 @@ ADMIN_PASSWORD = required_secret("ADMIN_PASSWORD")
 st.set_page_config(page_title=APP_TITLE, page_icon="PE", layout="wide")
 
 
+def hide_streamlit_chrome() -> None:
+    st.markdown(
+        """
+        <style>
+        #MainMenu,
+        footer,
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"],
+        [data-testid="stHeaderActionElements"],
+        [data-testid="stStatusWidget"],
+        .stDeployButton,
+        a[href*="github.com/lucasmandagaran/programacion-energia-excel"] {
+            display: none !important;
+            visibility: hidden !important;
+        }
+        header {
+            height: 0 !important;
+            min-height: 0 !important;
+            background: transparent !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+hide_streamlit_chrome()
+
+
 def normalize(value: Any) -> str:
     text = str(value or "").strip().lower()
     text = "".join(
