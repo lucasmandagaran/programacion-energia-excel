@@ -17,8 +17,10 @@ import streamlit as st
 APP_TITLE = "Programacion Energia"
 COMPANIES = ["", "MANPETROL", "SAN&FRAN", "OTRA"]
 SECTORS = ["", "Electricidad", "Mecanica", "Instrumentacion", "Otros"]
-ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE", "COMENTARIO"]
-WAIT_REASONS = [
+STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE"]
+REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
+REASONS = [
+    "",
     "Pedido Sup PAE",
     "Por factor climatico",
     "Por falta de equipo/recursos/materiales",
@@ -481,16 +483,15 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
     for task in tasks:
         advance = latest.get(task["id"], {})
         status = advance.get("action") or task.get("estado_programa") or "SIN AVANCE"
-        if status not in ACTIONS:
+        if status not in STATE_ACTIONS:
             status = "SIN AVANCE"
         rows.append(
             {
                 "Seleccionar": False,
-                "Trabajo": task.get("tarea") or "",
                 "Titulo tarea": task_title(task),
+                "Estado": status,
                 "Fecha inicio": format_date(task.get("fecha_inicio")),
                 "Duracion": f"{task.get('duracion') or 1} dia(s)",
-                "Estado": status,
                 "Cuadrilla": task.get("cuadrilla") or "",
                 "OT": ot_text(task.get("nro_ot")),
                 "Ubicacion tecnica": task.get("ubicacion_tecnica") or "",
@@ -536,7 +537,7 @@ def save_advance_entries(program_id: str, entries: list[dict[str, str]], reason:
             "program_id": program_id,
             "task_id": entry["task_id"],
             "action": entry["action"],
-            "reason": reason if entry["action"] == "EN ESPERA" else "",
+            "reason": reason if entry["action"] in REASON_ACTIONS else "",
             "observation": observation,
             "reporter_name": profile["name"],
             "reporter_company": profile.get("company") or "",
@@ -565,8 +566,8 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
         rows.append(
             {
                 "OT": ot_text(task.get("nro_ot")),
-                "Trabajo": task.get("tarea", ""),
                 "Titulo tarea": task_title(task),
+                "Trabajo": task.get("tarea", ""),
                 "Empresa": effective_company(task),
                 "Sector": effective_sector(task),
                 "Cuadrilla": task.get("cuadrilla", ""),
@@ -662,7 +663,7 @@ def main() -> None:
             "_task_id": None,
             "_estado_original": None,
             "Seleccionar": st.column_config.CheckboxColumn("Sel."),
-            "Estado": st.column_config.SelectboxColumn("Estado", options=ACTIONS, required=True),
+            "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True),
         },
         key="task_editor",
     )
@@ -682,7 +683,7 @@ def main() -> None:
 
     st.subheader("Cambiar estado")
     c1, c2, c3 = st.columns([1, 1, 2])
-    action = c1.selectbox("Estado para seleccionadas", ACTIONS)
+    action = c1.selectbox("Estado para seleccionadas", STATE_ACTIONS)
     if c2.button("Cambiar estado", disabled=not selected_task_ids, use_container_width=True):
         for task_id in selected_task_ids:
             pending_changes[task_id] = action
@@ -691,22 +692,20 @@ def main() -> None:
     entries = [{"task_id": task_id, "action": pending_changes[task_id]} for task_id in pending_visible_ids]
     selected_actions = [entry["action"] for entry in entries]
     reason = ""
-    if "EN ESPERA" in selected_actions:
-        reason = c3.selectbox("Motivo para EN ESPERA", WAIT_REASONS)
-    observation_required = any(item in {"REPLANIFICAR", "COMENTARIO"} for item in selected_actions) or (
-        "EN ESPERA" in selected_actions and reason == "Otros"
-    )
+    if any(item in REASON_ACTIONS for item in selected_actions):
+        reason = c3.selectbox("Motivo", REASONS, format_func=lambda item: option_label(item, "Seleccionar motivo"))
+    observation_required = any(item in REASON_ACTIONS for item in selected_actions) and reason == "Otros"
     observation = st.text_input(
         "Comentario comun" if observation_required else "Comentario opcional",
         placeholder="Se aplicara a todos los avances pendientes",
     )
 
     def pending_is_valid() -> bool:
-        if "EN ESPERA" in selected_actions and not reason:
-            st.warning("Elegir motivo para EN ESPERA.")
+        if any(item in REASON_ACTIONS for item in selected_actions) and not reason:
+            st.warning("Elegir motivo para EN ESPERA o REPLANIFICAR.")
             return False
         if observation_required and not observation.strip():
-            st.warning("Escribir el comentario comun para las tareas seleccionadas.")
+            st.warning("Escribir comentario cuando el motivo es Otros.")
             return False
         return True
 
@@ -751,13 +750,25 @@ def main() -> None:
             st.success(f"{len(pending_visible_ids)} avance(s) guardado(s).")
             st.rerun()
 
+    st.subheader("Agregar comentario")
+    comment_text = st.text_input(
+        "Comentario para tareas seleccionadas",
+        placeholder="Seleccionar una o mas tareas y escribir comentario",
+        key="comment_only_text",
+    )
+    if st.button("Guardar comentario", disabled=not selected_task_ids or not comment_text.strip()):
+        comment_entries = [{"task_id": task_id, "action": "COMENTARIO"} for task_id in selected_task_ids]
+        save_advance_entries(program["id"], comment_entries, "", comment_text.strip())
+        st.session_state.pop("task_editor", None)
+        st.success(f"{len(selected_task_ids)} comentario(s) guardado(s).")
+        st.rerun()
+
     st.subheader("Avances / registros")
     tasks_by_id = {task["id"]: task for task in tasks}
     log_rows = [
         {
             "_advance_id": advance.get("id", ""),
             "OT": ot_text(task.get("nro_ot")),
-            "Trabajo": task.get("tarea", ""),
             "Titulo tarea": task_title(task),
             "Fecha": format_datetime(advance.get("created_at")),
             "Avance": advance.get("action"),
@@ -769,6 +780,7 @@ def main() -> None:
             "Cuadrilla": task.get("cuadrilla", ""),
             "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
             "KKS/TAG": task.get("kks_tag", ""),
+            "Trabajo": task.get("tarea", ""),
         }
         for advance in filtered_advances
         for task in [tasks_by_id.get(advance["task_id"], {})]
