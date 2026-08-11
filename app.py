@@ -17,6 +17,7 @@ import streamlit as st
 APP_TITLE = "Programacion Energia"
 COMPANIES = ["", "MANPETROL", "SAN&FRAN", "OTRA"]
 SECTORS = ["", "Electricidad", "Mecanica", "Instrumentacion", "Otros"]
+GENERATION_SECTORS = {"electricidad", "mecanica", "instrumentacion"}
 STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE"]
 REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
 REASONS = [
@@ -94,6 +95,18 @@ def effective_sector(task: dict[str, Any]) -> str:
     value = str(task.get("sector") or "").strip()
     _, inferred = infer_company_sector(task.get("cuadrilla"))
     return value or inferred
+
+
+def is_other_company_scope(task: dict[str, Any]) -> bool:
+    inferred_company, _ = infer_company_sector(task.get("cuadrilla"))
+    return not inferred_company
+
+
+def is_other_sector_scope(task: dict[str, Any]) -> bool:
+    _, inferred_sector = infer_company_sector(task.get("cuadrilla"))
+    if inferred_sector == "Otros":
+        return True
+    return normalize(effective_sector(task)) not in GENERATION_SECTORS
 
 
 def supabase_headers(prefer: str | None = None) -> dict[str, str]:
@@ -473,10 +486,18 @@ def apply_filters(tasks: list[dict[str, Any]], company: str, sector: str, crew: 
     end_iso = end.isoformat() if end else ""
     text_norm = normalize(text)
     for task in tasks:
-        if company and normalize(effective_company(task)) != normalize(company):
-            continue
-        if sector and normalize(effective_sector(task)) != normalize(sector):
-            continue
+        if company:
+            if normalize(company) == "otra":
+                if not is_other_company_scope(task):
+                    continue
+            elif normalize(effective_company(task)) != normalize(company):
+                continue
+        if sector:
+            if normalize(sector) == "otros":
+                if not is_other_sector_scope(task):
+                    continue
+            elif normalize(effective_sector(task)) != normalize(sector):
+                continue
         if crew and normalize_crew(task.get("cuadrilla")) != normalize_crew(crew):
             continue
         task_start = task.get("fecha_inicio") or ""
