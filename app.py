@@ -982,7 +982,8 @@ def main() -> None:
         caption += f" {hidden_count} completada(s) o a replanificar ocultas."
     st.caption(caption)
     visible_task_ids = {task["id"] for task in filtered}
-    filtered_advances = [advance for advance in advances if advance.get("task_id") in visible_task_ids]
+    filtered_base_task_ids = {task["id"] for task in filtered_base}
+    filtered_advances = [advance for advance in advances if advance.get("task_id") in filtered_base_task_ids]
     scoped_task_ids = {task["id"] for task in scoped_tasks}
     scoped_advances = [advance for advance in advances if advance.get("task_id") in scoped_task_ids]
 
@@ -1122,8 +1123,17 @@ def main() -> None:
         st.success(f"{len(selected_task_ids)} comentario(s) guardado(s).")
         st.rerun()
 
-    st.subheader("Avances / registros")
+    title_col, view_col = st.columns([2, 1])
+    title_col.subheader("Avances / registros")
+    records_view = view_col.selectbox(
+        "Vista",
+        ["Log completo", "Estado final por OT"],
+        key="records_view",
+    )
     tasks_by_id = {task["id"]: task for task in tasks}
+    source_advances = filtered_advances
+    if records_view == "Estado final por OT":
+        source_advances = list(latest_status_by_task(filtered_advances).values())
     log_rows = [
         {
             "_advance_id": advance.get("id", ""),
@@ -1131,7 +1141,7 @@ def main() -> None:
             "Titulo tarea": task_title(task),
             "Fecha modificacion": advance_date(advance.get("created_at")),
             "Hora modificacion": advance_time(advance.get("created_at")),
-            "Estado": advance.get("action"),
+            ("Estado final" if records_view == "Estado final por OT" else "Estado"): advance.get("action"),
             "Comentario": combined_comment(advance),
             "Informado por": advance.get("reporter_name"),
             "Empresa": effective_company(task),
@@ -1140,7 +1150,7 @@ def main() -> None:
             "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
             "KKS/TAG": task.get("kks_tag", ""),
         }
-        for advance in filtered_advances
+        for advance in source_advances
         for task in [tasks_by_id.get(advance["task_id"], {})]
     ]
     log = pd.DataFrame([{key: value for key, value in row.items() if key != "_advance_id"} for row in log_rows])
@@ -1159,7 +1169,7 @@ def main() -> None:
                         "_advance_id": None,
                         "Eliminar": st.column_config.CheckboxColumn("Eliminar"),
                     },
-                    key="delete_advances_editor",
+                    key=f"delete_advances_editor_{records_view}",
                 )
                 selected_delete_ids = (
                     edited_delete.loc[edited_delete["Eliminar"] == True, "_advance_id"].tolist()
@@ -1172,18 +1182,18 @@ def main() -> None:
             d1, d2, d3 = st.columns(3)
             if d1.button("Eliminar seleccionados", disabled=not selected_delete_ids):
                 delete_advances(selected_delete_ids)
-                st.session_state.pop("delete_advances_editor", None)
+                st.session_state.pop(f"delete_advances_editor_{records_view}", None)
                 st.success(f"{len(selected_delete_ids)} registro(s) eliminado(s).")
                 st.rerun()
-            if d2.button("Eliminar visibles por filtros", disabled=not filtered_advances):
-                delete_advances([advance["id"] for advance in filtered_advances])
-                st.session_state.pop("delete_advances_editor", None)
+            if d2.button("Eliminar visibles por filtros", disabled=not log_rows):
+                delete_advances([row["_advance_id"] for row in log_rows if row.get("_advance_id")])
+                st.session_state.pop(f"delete_advances_editor_{records_view}", None)
                 st.success("Registros visibles eliminados.")
                 st.rerun()
             confirm_all = st.checkbox("Confirmo eliminar todos los registros de avances del programa activo")
             if d3.button("Eliminar todo el programa", disabled=not confirm_all):
                 delete_advances([advance["id"] for advance in advances])
-                st.session_state.pop("delete_advances_editor", None)
+                st.session_state.pop(f"delete_advances_editor_{records_view}", None)
                 st.success("Registros del programa eliminados.")
                 st.rerun()
 
@@ -1191,12 +1201,12 @@ def main() -> None:
     e1, e2, e3 = export_columns[:3]
     e1.download_button(
         "Exportar log Excel",
-        data=advances_export(filtered, filtered_advances, final_only=False),
+        data=advances_export(filtered_base, filtered_advances, final_only=False),
         file_name=f"avances_{date.today().isoformat()}.xlsx",
     )
     e2.download_button(
         "Exportar estado final Excel",
-        data=advances_export(filtered, filtered_advances, final_only=True),
+        data=advances_export(filtered_base, filtered_advances, final_only=True),
         file_name=f"estado_final_{date.today().isoformat()}.xlsx",
     )
     e3.download_button(
@@ -1207,7 +1217,7 @@ def main() -> None:
     if st.session_state.role == "admin":
         export_columns[3].download_button(
             "Exportar avances para Wrike",
-            data=wrike_advances_export(filtered, filtered_advances),
+            data=wrike_advances_export(filtered_base, filtered_advances),
             file_name="avances_cuadrillas_wrike.xlsx",
         )
 
