@@ -1129,7 +1129,7 @@ def main() -> None:
     e4.download_button(
         "Exportar avances para Wrike",
         data=wrike_advances_export(filtered, filtered_advances),
-        file_name=f"avances_para_wrike_{date.today().isoformat()}.xlsx",
+        file_name="avances_cuadrillas_wrike.xlsx",
     )
 
 
