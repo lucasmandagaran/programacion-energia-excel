@@ -623,14 +623,13 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
                 "Avance": advance.get("action", ""),
                 "Motivo": advance.get("reason", ""),
                 "Comentarios": advance.get("observation", ""),
-                "Fecha avance": format_datetime(advance.get("created_at")),
+                "Fecha avance": advance_date(advance.get("created_at")),
+                "Hora avance": advance_time(advance.get("created_at")),
                 "Informado por": advance.get("reporter_name", ""),
                 "Empresa informante": advance.get("reporter_company", ""),
             }
         )
-    buffer = io.BytesIO()
-    pd.DataFrame(rows).to_excel(buffer, index=False)
-    return buffer.getvalue()
+    return write_excel(rows, sheet_name="Avances")
 
 
 def advance_date(value: Any) -> str:
@@ -641,6 +640,46 @@ def advance_date(value: Any) -> str:
         return parsed.strftime("%d/%m/%Y")
     except Exception:
         return str(value)[:10]
+
+
+def advance_time(value: Any) -> str:
+    if not value:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.strftime("%H:%M")
+    except Exception:
+        return ""
+
+
+def looks_like_date_column(column: str) -> bool:
+    normalized = normalize(column)
+    return any(part in normalized for part in ["fecha", "vencimiento", "inicio", "fin", "start", "due"])
+
+
+def export_date(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = parse_date(text)
+    if parsed:
+        return format_date(parsed)
+    return text
+
+
+def write_excel(rows: list[dict[str, Any]], columns: list[str] | None = None, sheet_name: str = "Datos") -> bytes:
+    buffer = io.BytesIO()
+    df = pd.DataFrame(rows, columns=columns)
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        worksheet = writer.sheets[sheet_name]
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+        for column_cells in worksheet.columns:
+            header = str(column_cells[0].value or "")
+            max_length = max(len(str(cell.value or "")) for cell in column_cells)
+            worksheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, len(header) + 2), 45)
+    return buffer.getvalue()
 
 
 def program_updated_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]]) -> bytes:
@@ -688,14 +727,16 @@ def program_updated_export(tasks: list[dict[str, Any]], advances: list[dict[str,
             if nro_col:
                 row[nro_col] = ot_text(row.get(nro_col))
 
+        for column in list(row.keys()):
+            if looks_like_date_column(column):
+                row[column] = export_date(row.get(column))
+
         for column in row.keys():
             if column not in columns:
                 columns.append(column)
         rows.append(row)
 
-    buffer = io.BytesIO()
-    pd.DataFrame(rows, columns=columns).to_excel(buffer, index=False)
-    return buffer.getvalue()
+    return write_excel(rows, columns=columns, sheet_name="Programa actualizado")
 
 
 def format_datetime(value: Any) -> str:
@@ -884,7 +925,8 @@ def main() -> None:
             "_advance_id": advance.get("id", ""),
             "OT": ot_text(task.get("nro_ot")),
             "Titulo tarea": task_title(task),
-            "Fecha": format_datetime(advance.get("created_at")),
+            "Fecha modificacion": advance_date(advance.get("created_at")),
+            "Hora modificacion": advance_time(advance.get("created_at")),
             "Avance": advance.get("action"),
             "Motivo": advance.get("reason"),
             "Comentario": advance.get("observation"),
