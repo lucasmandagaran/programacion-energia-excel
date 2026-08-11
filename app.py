@@ -917,6 +917,45 @@ def strip_kks_if_distribution(rows: list[dict[str, Any]], tasks: list[dict[str, 
     return [{key: value for key, value in row.items() if key != "KKS/TAG"} for row in rows]
 
 
+def order_records_by_area(
+    rows: list[dict[str, Any]],
+    tasks: list[dict[str, Any]],
+    state_column: str,
+) -> list[dict[str, Any]]:
+    if hide_kks_for_tasks(tasks):
+        columns = [
+            "_advance_id",
+            "Titulo tarea",
+            "Cuadrilla",
+            "OT",
+            "Ubicacion tecnica",
+            state_column,
+            "Comentario",
+            "Fecha modificacion",
+            "Hora modificacion",
+            "Informado por",
+            "Empresa",
+            "Sector",
+        ]
+    else:
+        columns = [
+            "_advance_id",
+            "Titulo tarea",
+            state_column,
+            "OT",
+            "Cuadrilla",
+            "Ubicacion tecnica",
+            "KKS/TAG",
+            "Comentario",
+            "Fecha modificacion",
+            "Hora modificacion",
+            "Informado por",
+            "Empresa",
+            "Sector",
+        ]
+    return [{column: row.get(column, "") for column in columns if column in row} for row in rows]
+
+
 def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]], final_only: bool = False) -> bytes:
     tasks_by_id = {task["id"]: task for task in tasks}
     rows = []
@@ -1456,6 +1495,7 @@ def main() -> None:
     source_advances = filtered_advances
     if records_view == "Estado final por OT":
         source_advances = list(latest_status_by_task(filtered_advances).values())
+    state_column = "Estado final" if records_view == "Estado final por OT" else "Estado"
     log_rows = [
         {
             "_advance_id": advance.get("id", ""),
@@ -1463,7 +1503,7 @@ def main() -> None:
             "Titulo tarea": task_title(task),
             "Fecha modificacion": advance_date(advance.get("created_at")),
             "Hora modificacion": advance_time(advance.get("created_at")),
-            ("Estado final" if records_view == "Estado final por OT" else "Estado"): advance.get("action"),
+            state_column: advance.get("action"),
             "Comentario": combined_comment(advance),
             "Informado por": advance.get("reporter_name"),
             "Empresa": effective_company(task),
@@ -1475,7 +1515,11 @@ def main() -> None:
         for advance in source_advances
         for task in [tasks_by_id.get(advance["task_id"], {})]
     ]
-    display_log_rows = strip_kks_if_distribution(log_rows, filtered_base)
+    display_log_rows = order_records_by_area(
+        strip_kks_if_distribution(log_rows, filtered_base),
+        filtered_base,
+        state_column,
+    )
     log = pd.DataFrame([{key: value for key, value in row.items() if key != "_advance_id"} for row in display_log_rows])
     st.dataframe(log, hide_index=True, use_container_width=True)
 
