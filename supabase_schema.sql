@@ -3,6 +3,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.programs (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  area text not null default 'GENERACION',
   source_filename text,
   uploaded_by text,
   uploaded_at timestamptz not null default now(),
@@ -12,6 +13,7 @@ create table if not exists public.programs (
 create table if not exists public.tasks (
   id uuid primary key default gen_random_uuid(),
   program_id uuid not null references public.programs(id) on delete cascade,
+  area text not null default 'GENERACION',
   row_hash text,
   nro_ot text,
   tarea text,
@@ -41,7 +43,14 @@ create table if not exists public.advances (
   created_at timestamptz not null default now()
 );
 
+alter table public.programs add column if not exists area text not null default 'GENERACION';
+alter table public.tasks add column if not exists area text not null default 'GENERACION';
+update public.programs set area = 'GENERACION' where area is null or trim(area) = '';
+update public.tasks set area = 'GENERACION' where area is null or trim(area) = '';
+
 create index if not exists idx_tasks_program on public.tasks(program_id);
+create index if not exists idx_programs_area_active on public.programs(area, active);
+create index if not exists idx_tasks_area_program on public.tasks(area, program_id);
 create index if not exists idx_tasks_filters on public.tasks(program_id, empresa, sector, cuadrilla, fecha_inicio);
 create index if not exists idx_advances_program on public.advances(program_id, created_at desc);
 create index if not exists idx_advances_task on public.advances(task_id, created_at desc);

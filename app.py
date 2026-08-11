@@ -15,9 +15,33 @@ import streamlit as st
 
 
 APP_TITLE = "Programacion Energia"
-COMPANIES = ["", "MANPETROL", "SAN&FRAN", "OTRA"]
-SECTORS = ["", "Electricidad", "Mecanica", "Instrumentacion", "Otros"]
+AREAS = ["GENERACION", "DISTRIBUCION"]
+COMPANIES_BY_AREA = {
+    "GENERACION": ["", "MANPETROL", "SAN&FRAN", "OTRA"],
+    "DISTRIBUCION": ["", "MANPETROL", "ELECTRO PATAGONIA", "OTRA"],
+}
+SECTORS_BY_AREA = {
+    "GENERACION": ["", "Electricidad", "Mecanica", "Instrumentacion", "Otros"],
+    "DISTRIBUCION": [
+        "",
+        "Estaciones Transformadoras",
+        "Telemando",
+        "Trabajos con tension",
+        "Trabajos sin tension",
+        "Guardia 24hs",
+        "Otros",
+    ],
+}
+COMPANIES = COMPANIES_BY_AREA["GENERACION"]
+SECTORS = SECTORS_BY_AREA["GENERACION"]
 GENERATION_SECTORS = {"electricidad", "mecanica", "instrumentacion"}
+DISTRIBUTION_SECTORS = {
+    "estaciones transformadoras",
+    "telemando",
+    "trabajos con tension",
+    "trabajos sin tension",
+    "guardia 24hs",
+}
 STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE"]
 REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
 HIDE_AFTER_SAVE_ACTIONS = {"COMPLETADO", "REPLANIFICAR"}
@@ -50,6 +74,26 @@ def scope_value(value: Any) -> str:
     if normalize(text) in {"todas", "todos", "all"}:
         return ""
     return text
+
+
+def canonical_area(value: Any) -> str:
+    norm = compact_key(value)
+    if "distrib" in norm or norm in {"td", "tyd", "tandd"}:
+        return "DISTRIBUCION"
+    return "GENERACION"
+
+
+def current_area() -> str:
+    profile = st.session_state.get("profile", {})
+    return canonical_area(profile.get("area") or "GENERACION")
+
+
+def program_area(program: dict[str, Any]) -> str:
+    return canonical_area(program.get("area") or "GENERACION")
+
+
+def task_area(task: dict[str, Any]) -> str:
+    return canonical_area(task.get("area") or "GENERACION")
 
 
 def secret(name: str, default: str = "") -> str:
@@ -97,6 +141,8 @@ def canonical_company(value: Any) -> str:
         return "MANPETROL"
     if "sanfran" in norm or "sanyfran" in norm or norm in {"sf", "sanf"}:
         return "SAN&FRAN"
+    if "electropatagonia" in norm or norm in {"ep", "elepatagonia"}:
+        return "ELECTRO PATAGONIA"
     if norm in {"otra", "otro", "otros", "otras"}:
         return "OTRA"
     return str(value or "").strip()
@@ -106,6 +152,9 @@ def canonical_sector(value: Any) -> str:
     norm = compact_key(value)
     if not norm:
         return ""
+    company, distribution_sector = distribution_company_sector(value)
+    if distribution_sector:
+        return distribution_sector
     if "elect" in norm or norm in {"elec", "pdgelec", "pdegelec", "pdgelect", "pdgelectrico"}:
         return "Electricidad"
     if "inst" in norm or norm in {"pdginst", "pdeginst", "pdginstrumentacion"}:
@@ -117,7 +166,28 @@ def canonical_sector(value: Any) -> str:
     return str(value or "").strip()
 
 
-def infer_company_sector(cuadrilla: Any) -> tuple[str, str]:
+def distribution_company_sector(value: Any) -> tuple[str, str]:
+    norm = compact_key(value)
+    if not norm:
+        return "", ""
+    if "tareasrelevantes" in norm:
+        return "", ""
+    if "pdedeett" in norm or "estacionestransformadoras" in norm:
+        return "MANPETROL", "Estaciones Transformadoras"
+    if "pdedstel" in norm or "telemando" in norm:
+        return "ELECTRO PATAGONIA", "Telemando"
+    if "pdedetct" in norm or norm.startswith("tct") or "trabajoscontension" in norm:
+        return "MANPETROL", "Trabajos con tension"
+    if "pdedstop" in norm or norm.startswith("tst") or "trabajossintension" in norm:
+        return "ELECTRO PATAGONIA", "Trabajos sin tension"
+    if "guardia24" in norm:
+        return "MANPETROL", "Guardia 24hs"
+    return "", ""
+
+
+def infer_company_sector(cuadrilla: Any, area: Any = "GENERACION", sector_value: Any = "") -> tuple[str, str]:
+    if canonical_area(area) == "DISTRIBUCION":
+        return distribution_company_sector(sector_value)
     crew = normalize_crew(cuadrilla)
     if crew in {"555", "555A", "A555"}:
         return "MANPETROL", "Electricidad"
@@ -129,28 +199,33 @@ def infer_company_sector(cuadrilla: Any) -> tuple[str, str]:
 
 
 def effective_company(task: dict[str, Any]) -> str:
+    area = task_area(task)
     value = canonical_company(task.get("empresa"))
-    inferred, _ = infer_company_sector(task.get("cuadrilla"))
+    inferred, _ = infer_company_sector(task.get("cuadrilla"), area, task.get("sector"))
     crew_company = canonical_company(task.get("cuadrilla"))
     return value or inferred or crew_company
 
 
 def effective_sector(task: dict[str, Any]) -> str:
+    area = task_area(task)
     value = canonical_sector(task.get("sector"))
-    _, inferred = infer_company_sector(task.get("cuadrilla"))
+    _, inferred = infer_company_sector(task.get("cuadrilla"), area, task.get("sector"))
     return value or inferred
 
 
 def is_other_company_scope(task: dict[str, Any]) -> bool:
-    inferred_company, _ = infer_company_sector(task.get("cuadrilla"))
+    area = task_area(task)
+    inferred_company, _ = infer_company_sector(task.get("cuadrilla"), area, task.get("sector"))
     return not inferred_company
 
 
 def is_other_sector_scope(task: dict[str, Any]) -> bool:
-    _, inferred_sector = infer_company_sector(task.get("cuadrilla"))
+    area = task_area(task)
+    _, inferred_sector = infer_company_sector(task.get("cuadrilla"), area, task.get("sector"))
     if inferred_sector == "Otros":
         return True
-    return normalize(effective_sector(task)) not in GENERATION_SECTORS
+    known = GENERATION_SECTORS if area == "GENERACION" else DISTRIBUTION_SECTORS
+    return normalize(effective_sector(task)) not in known
 
 
 def supabase_headers(prefer: str | None = None) -> dict[str, str]:
@@ -274,14 +349,17 @@ def profile_screen() -> None:
     st.title(APP_TITLE)
     st.subheader("Ingreso al programa")
     with st.form("profile_form"):
-        company = st.selectbox("Empresa", COMPANIES, index=0, format_func=lambda item: option_label(item, "Todas"))
-        sector = st.selectbox("Sector", SECTORS, index=0, format_func=lambda item: option_label(item, "Todos"))
+        area = st.selectbox("Area", AREAS, index=0)
+        company_options = COMPANIES_BY_AREA[area]
+        sector_options = SECTORS_BY_AREA[area]
+        company = st.selectbox("Empresa", company_options, index=0, format_func=lambda item: option_label(item, "Todas"))
+        sector = st.selectbox("Sector", sector_options, index=0, format_func=lambda item: option_label(item, "Todos"))
         name = st.text_input("Nombre", placeholder="Nombre y apellido / rol")
         if st.form_submit_button("Ingresar", type="primary"):
             if not name.strip():
                 st.warning("Ingresar nombre de usuario.")
                 st.stop()
-            st.session_state.profile = {"company": company, "sector": sector, "name": name.strip()}
+            st.session_state.profile = {"area": area, "company": company, "sector": sector, "name": name.strip()}
             st.rerun()
     st.stop()
 
@@ -297,7 +375,10 @@ def logout_controls() -> None:
     col1, col2, col3 = st.columns([3, 1, 1])
     profile = st.session_state.profile
     role = "Administrador" if st.session_state.role == "admin" else "Usuario"
-    col1.caption(f"{role}: {profile['name']} - {profile.get('company') or 'Todas'} / {profile.get('sector') or 'Todos'}")
+    area = canonical_area(profile.get("area") or "GENERACION")
+    col1.caption(
+        f"{role}: {profile['name']} - {area} - {profile.get('company') or 'Todas'} / {profile.get('sector') or 'Todos'}"
+    )
     if col2.button("Cambiar perfil"):
         st.session_state.pop("profile", None)
         st.rerun()
@@ -420,7 +501,19 @@ def task_title(task: dict[str, Any]) -> str:
     return str(task.get("tarea") or "").strip()
 
 
-def map_excel(df: pd.DataFrame) -> list[dict[str, Any]]:
+def is_distribution_skip_section(value: Any) -> bool:
+    return "tareasrelevantes" in compact_key(value)
+
+
+def section_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.startswith("/") and text.endswith("/"):
+        text = text.strip("/").strip()
+    return text
+
+
+def map_excel(df: pd.DataFrame, area: str = "GENERACION") -> list[dict[str, Any]]:
+    area = canonical_area(area)
     columns = list(df.columns)
     mapping = {
         "nro_ot": find_column(columns, OT_COLUMNS),
@@ -435,21 +528,46 @@ def map_excel(df: pd.DataFrame) -> list[dict[str, Any]]:
         "kks_tag": find_column(columns, KKS_COLUMNS),
     }
     tasks: list[dict[str, Any]] = []
+    current_section = ""
+    skip_section = False
     for _, row in df.iterrows():
         tarea = row_text(row, mapping["tarea"])
         nro_ot = ot_text(row_text(row, mapping["nro_ot"]))
+        cuadrilla = row_text(row, mapping["cuadrilla"])
+        estado_programa = row_text(row, mapping["estado_programa"])
+        section_candidate = section_text(tarea)
+        if area == "DISTRIBUCION":
+            section_company, section_sector = distribution_company_sector(section_candidate)
+            if is_distribution_skip_section(section_candidate):
+                current_section = section_candidate
+                skip_section = True
+                continue
+            is_section_row = bool(section_sector) and not nro_ot and not cuadrilla
+            if is_section_row:
+                current_section = section_candidate
+                skip_section = False
+                continue
+            if skip_section or not current_section:
+                continue
+            if not cuadrilla:
+                continue
+        elif tarea.startswith("/") and tarea.endswith("/") and not nro_ot:
+            continue
         if not tarea and not nro_ot:
             continue
         start = parse_date(row.get(mapping["fecha_inicio"])) if mapping["fecha_inicio"] else None
         end = parse_date(row.get(mapping["fecha_fin"])) if mapping["fecha_fin"] else None
-        cuadrilla = row_text(row, mapping["cuadrilla"])
-        inferred_company, inferred_sector = infer_company_sector(cuadrilla)
+        if area == "DISTRIBUCION":
+            inferred_company, inferred_sector = distribution_company_sector(current_section)
+        else:
+            inferred_company, inferred_sector = infer_company_sector(cuadrilla, area)
         empresa = canonical_company(row_text(row, mapping["empresa"])) or inferred_company or canonical_company(cuadrilla)
         sector = canonical_sector(row_text(row, mapping["sector"])) or inferred_sector
         raw = {str(col): (None if pd.isna(row.get(col)) else str(row.get(col))) for col in columns}
         digest = hashlib.sha1(json.dumps(raw, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         tasks.append(
             {
+                "area": area,
                 "row_hash": digest,
                 "nro_ot": nro_ot,
                 "tarea": tarea,
@@ -459,7 +577,7 @@ def map_excel(df: pd.DataFrame) -> list[dict[str, Any]]:
                 "fecha_inicio": start,
                 "fecha_fin": end,
                 "duracion": duration_days(start, end),
-                "estado_programa": row_text(row, mapping["estado_programa"]),
+                "estado_programa": estado_programa,
                 "ubicacion_tecnica": row_text(row, mapping["ubicacion_tecnica"]),
                 "kks_tag": row_text(row, mapping["kks_tag"]),
                 "raw": raw,
@@ -487,23 +605,27 @@ def admin_panel() -> None:
     if st.session_state.role != "admin":
         return
     with st.expander("Administracion - cargar programa Excel", expanded=False):
+        default_area = current_area()
+        upload_area = st.selectbox("Area del programa", AREAS, index=AREAS.index(default_area))
         uploaded = st.file_uploader("Excel del programa", type=["xlsx", "xls"])
         program_name = st.text_input("Nombre del programa", value=f"Programa {date.today().isoformat()}")
         replace_active = st.checkbox("Dejar este como unico programa activo", value=True)
         if st.button("Publicar programa", type="primary", disabled=uploaded is None):
             with st.spinner("Importando Excel..."):
                 df = pd.read_excel(uploaded)
-                tasks = map_excel(df)
+                tasks = map_excel(df, upload_area)
                 if not tasks:
                     st.error("No encontre tareas validas en el Excel.")
                     return
                 if replace_active:
                     for program in list_programs(active_only=True):
-                        sb_patch("programs", {"id": f"eq.{program['id']}"}, {"active": False})
+                        if program_area(program) == upload_area:
+                            sb_patch("programs", {"id": f"eq.{program['id']}"}, {"active": False})
                 program = sb_insert(
                     "programs",
                     {
                         "name": program_name.strip() or uploaded.name,
+                        "area": upload_area,
                         "source_filename": uploaded.name,
                         "uploaded_by": st.session_state.profile["name"],
                         "active": True,
@@ -519,7 +641,11 @@ def admin_panel() -> None:
         programs = list_programs(active_only=False)
         if programs:
             st.divider()
-            selected = st.selectbox("Programa para administrar", programs, format_func=lambda item: item["name"])
+            selected = st.selectbox(
+                "Programa para administrar",
+                programs,
+                format_func=lambda item: f"{program_area(item)} - {item['name']}",
+            )
             col1, col2 = st.columns(2)
             if col1.button("Activar / mostrar a cuadrillas"):
                 sb_patch("programs", {"id": f"eq.{selected['id']}"}, {"active": True})
@@ -948,9 +1074,11 @@ def main() -> None:
     logout_controls()
     admin_panel()
 
-    programs = list_programs(active_only=True)
+    profile = st.session_state.profile
+    area = canonical_area(profile.get("area") or "GENERACION")
+    programs = [program for program in list_programs(active_only=True) if program_area(program) == area]
     if not programs:
-        st.info("No hay programas activos. Ingresar como administrador y cargar un Excel.")
+        st.info(f"No hay programas activos para {area}. Ingresar como administrador y cargar un Excel.")
         return
 
     program = st.selectbox("Programa", programs, format_func=lambda item: item["name"], key="program_filter")
@@ -958,7 +1086,6 @@ def main() -> None:
     advances = load_advances(program["id"])
     latest = latest_status_by_task(advances)
 
-    profile = st.session_state.profile
     company = scope_value(profile.get("company"))
     sector = scope_value(profile.get("sector"))
     scoped_tasks = apply_filters(tasks, company, sector, "", None, None, "")
