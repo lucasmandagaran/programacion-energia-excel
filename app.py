@@ -33,6 +33,13 @@ def option_label(value: str, empty_label: str) -> str:
     return value or empty_label
 
 
+def scope_value(value: Any) -> str:
+    text = str(value or "").strip()
+    if normalize(text) in {"todas", "todos", "all"}:
+        return ""
+    return text
+
+
 def secret(name: str, default: str = "") -> str:
     try:
         return str(st.secrets.get(name, "") or os.getenv(name, "") or default)
@@ -447,6 +454,9 @@ def admin_panel() -> None:
 
 def apply_filters(tasks: list[dict[str, Any]], company: str, sector: str, crew: str, start: Any, end: Any, text: str) -> list[dict[str, Any]]:
     output = []
+    company = scope_value(company)
+    sector = scope_value(sector)
+    crew = scope_value(crew)
     start_iso = start.isoformat() if start else ""
     end_iso = end.isoformat() if end else ""
     text_norm = normalize(text)
@@ -614,8 +624,8 @@ def main() -> None:
     latest = latest_status_by_task(advances)
 
     profile = st.session_state.profile
-    company = profile.get("company") or ""
-    sector = profile.get("sector") or ""
+    company = scope_value(profile.get("company"))
+    sector = scope_value(profile.get("sector"))
     scoped_tasks = apply_filters(tasks, company, sector, "", None, None, "")
     crews = [""] + sorted({task.get("cuadrilla") or "" for task in scoped_tasks if task.get("cuadrilla")})
 
@@ -695,9 +705,13 @@ def main() -> None:
     if any(item in REASON_ACTIONS for item in selected_actions):
         reason = c3.selectbox("Motivo", REASONS, format_func=lambda item: option_label(item, "Seleccionar motivo"))
     observation_required = any(item in REASON_ACTIONS for item in selected_actions) and reason == "Otros"
+    comment_label = "Comentario comun"
+    if observation_required:
+        comment_label = "Comentario comun obligatorio"
     observation = st.text_input(
-        "Comentario comun" if observation_required else "Comentario opcional",
-        placeholder="Se aplicara a todos los avances pendientes",
+        comment_label,
+        placeholder="Opcional. Obligatorio solo si el motivo es Otros. Tambien sirve para agregar comentario a tareas seleccionadas.",
+        key="common_comment_text",
     )
 
     def pending_is_valid() -> bool:
@@ -740,7 +754,8 @@ def main() -> None:
             st.session_state.pop("confirm_refresh", None)
             st.rerun()
 
-    if st.button("Guardar avances", type="primary", disabled=not pending_visible_ids):
+    save_col, comment_col = st.columns([1, 1])
+    if save_col.button("Guardar avances", type="primary", disabled=not pending_visible_ids):
         if pending_is_valid():
             save_advance_entries(program["id"], entries, reason, observation.strip())
             for task_id in pending_visible_ids:
@@ -750,15 +765,9 @@ def main() -> None:
             st.success(f"{len(pending_visible_ids)} avance(s) guardado(s).")
             st.rerun()
 
-    st.subheader("Agregar comentario")
-    comment_text = st.text_input(
-        "Comentario para tareas seleccionadas",
-        placeholder="Seleccionar una o mas tareas y escribir comentario",
-        key="comment_only_text",
-    )
-    if st.button("Guardar comentario", disabled=not selected_task_ids or not comment_text.strip()):
+    if comment_col.button("Guardar comentario", disabled=not selected_task_ids or not observation.strip()):
         comment_entries = [{"task_id": task_id, "action": "COMENTARIO"} for task_id in selected_task_ids]
-        save_advance_entries(program["id"], comment_entries, "", comment_text.strip())
+        save_advance_entries(program["id"], comment_entries, "", observation.strip())
         st.session_state.pop("task_editor", None)
         st.success(f"{len(selected_task_ids)} comentario(s) guardado(s).")
         st.rerun()
