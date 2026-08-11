@@ -27,6 +27,10 @@ WAIT_REASONS = [
 ]
 
 
+def option_label(value: str, empty_label: str) -> str:
+    return value or empty_label
+
+
 def secret(name: str, default: str = "") -> str:
     try:
         return str(st.secrets.get(name, "") or os.getenv(name, "") or default)
@@ -197,8 +201,8 @@ def profile_screen() -> None:
     st.title(APP_TITLE)
     st.subheader("Ingreso al programa")
     with st.form("profile_form"):
-        company = st.selectbox("Empresa", COMPANIES, index=0)
-        sector = st.selectbox("Sector", SECTORS, index=0)
+        company = st.selectbox("Empresa", COMPANIES, index=0, format_func=lambda item: option_label(item, "Todas"))
+        sector = st.selectbox("Sector", SECTORS, index=0, format_func=lambda item: option_label(item, "Todos"))
         name = st.text_input("Nombre", placeholder="Nombre y apellido / rol")
         if st.form_submit_button("Ingresar", type="primary"):
             if not name.strip():
@@ -271,6 +275,19 @@ def row_text(row: pd.Series, column: str | None) -> str:
     return str(value).strip()
 
 
+def ot_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if re.fullmatch(r"\d+\.0+", text):
+        return text.split(".", 1)[0]
+    try:
+        number = float(text)
+        if number.is_integer():
+            return str(int(number))
+    except Exception:
+        pass
+    return text
+
+
 def map_excel(df: pd.DataFrame) -> list[dict[str, Any]]:
     columns = list(df.columns)
     mapping = {
@@ -288,7 +305,7 @@ def map_excel(df: pd.DataFrame) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
     for _, row in df.iterrows():
         tarea = row_text(row, mapping["tarea"])
-        nro_ot = row_text(row, mapping["nro_ot"])
+        nro_ot = ot_text(row_text(row, mapping["nro_ot"]))
         if not tarea and not nro_ot:
             continue
         start = parse_date(row.get(mapping["fecha_inicio"])) if mapping["fecha_inicio"] else None
@@ -429,7 +446,7 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
                 "Duracion": f"{task.get('duracion') or 1} dia(s)",
                 "Estado": status,
                 "Cuadrilla": task.get("cuadrilla") or "",
-                "OT": task.get("nro_ot") or "",
+                "OT": ot_text(task.get("nro_ot")),
                 "Ubicacion tecnica": task.get("ubicacion_tecnica") or "",
                 "KKS/TAG": task.get("kks_tag") or "",
                 "_task_id": task["id"],
@@ -501,7 +518,7 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
         task = tasks_by_id.get(advance["task_id"], {})
         rows.append(
             {
-                "OT": task.get("nro_ot", ""),
+                "OT": ot_text(task.get("nro_ot")),
                 "Trabajo": task.get("tarea", ""),
                 "Empresa": effective_company(task),
                 "Sector": effective_sector(task),
@@ -543,7 +560,11 @@ def main() -> None:
         st.info("No hay programas activos. Ingresar como administrador y cargar un Excel.")
         return
 
-    program = st.selectbox("Programa", programs, format_func=lambda item: item["name"])
+    program_col, refresh_col = st.columns([5, 1])
+    program = program_col.selectbox("Programa", programs, format_func=lambda item: item["name"])
+    if refresh_col.button("Actualizar datos", use_container_width=True):
+        st.session_state.pop("task_editor", None)
+        st.rerun()
     tasks = load_tasks(program["id"])
     advances = load_advances(program["id"])
     latest = latest_status_by_task(advances)
@@ -555,15 +576,18 @@ def main() -> None:
     crews = [""] + sorted({task.get("cuadrilla") or "" for task in scoped_tasks if task.get("cuadrilla")})
 
     col1, col2, col3 = st.columns(3)
-    crew = col1.selectbox("Cuadrilla", crews)
+    crew = col1.selectbox("Cuadrilla", crews, format_func=lambda item: option_label(item, "Todas"))
     start = col2.date_input("Fecha inicio", value=None, format="DD/MM/YYYY")
     end = col3.date_input("Fecha fin", value=None, format="DD/MM/YYYY")
     text = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG")
 
     filtered = apply_filters(tasks, company, sector, crew, start, end, text)
     st.caption(f"{len(filtered)} tarea(s) visibles de {len(scoped_tasks)} cargadas para el perfil seleccionado.")
+    visible_task_ids = {task["id"] for task in filtered}
+    filtered_advances = [advance for advance in advances if advance.get("task_id") in visible_task_ids]
 
     df = task_dataframe(filtered, latest)
+    inline_entries_by_task: dict[str, dict[str, str]] = {}
     editor_state = st.session_state.get("task_editor", {})
     if isinstance(editor_state, dict):
         for row_index, changes in editor_state.get("edited_rows", {}).items():
@@ -573,8 +597,13 @@ def main() -> None:
                 except Exception:
                     continue
                 if 0 <= index < len(df):
-                    df.at[index, "Estado"] = changes["Estado"]
-                    df.at[index, "Seleccionar"] = True
+                    new_status = str(changes["Estado"] or "")
+                    original_status = str(df.at[index, "_estado_original"] or "")
+                    df.at[index, "Estado"] = new_status
+                    if new_status and new_status != original_status:
+                        df.at[index, "Seleccionar"] = True
+                        task_id = str(df.at[index, "_task_id"])
+                        inline_entries_by_task[task_id] = {"task_id": task_id, "action": new_status}
     edited = st.data_editor(
         df,
         hide_index=True,
@@ -590,21 +619,22 @@ def main() -> None:
     )
     if edited.empty:
         selected_rows = edited
+        manual_entries_by_task: dict[str, dict[str, str]] = {}
     else:
-        changed_rows = edited["Estado"] != edited["_estado_original"]
-        selected_rows = edited.loc[(edited["Seleccionar"] == True) | changed_rows].copy()
-    selected_ids = selected_rows["_task_id"].tolist() if not selected_rows.empty else []
+        selected_rows = edited.loc[edited["Seleccionar"] == True].copy()
+        manual_entries_by_task = {
+            str(row["_task_id"]): {"task_id": str(row["_task_id"]), "action": ""}
+            for _, row in selected_rows.iterrows()
+        }
+    selected_ids = sorted(set(manual_entries_by_task) | set(inline_entries_by_task))
 
     st.subheader("Informar seleccionadas")
     c1, c2, c3 = st.columns([1, 1, 2])
     action = c1.selectbox("Avance por defecto", ACTIONS)
-    if selected_rows.empty:
-        selected_actions: list[str] = []
-    else:
-        selected_actions = [
-            row["Estado"] if row["Estado"] != row["_estado_original"] else action
-            for _, row in selected_rows.iterrows()
-        ]
+    entries_by_task = {task_id: {"task_id": task_id, "action": action} for task_id in manual_entries_by_task}
+    entries_by_task.update(inline_entries_by_task)
+    entries = list(entries_by_task.values())
+    selected_actions = [entry["action"] for entry in entries]
     reason = ""
     if "EN ESPERA" in selected_actions:
         reason = c2.selectbox("Motivo", WAIT_REASONS)
@@ -621,30 +651,30 @@ def main() -> None:
         elif observation_required and not observation.strip():
             st.warning("Escribir el comentario comun para las tareas seleccionadas.")
         else:
-            entries = [
-                {
-                    "task_id": row["_task_id"],
-                    "action": row["Estado"] if row["Estado"] != row["_estado_original"] else action,
-                }
-                for _, row in selected_rows.iterrows()
-            ]
             save_advance_entries(program["id"], entries, reason, observation.strip())
             st.success(f"{len(selected_ids)} avance(s) guardado(s).")
             st.rerun()
 
     st.subheader("Avances / registros")
+    tasks_by_id = {task["id"]: task for task in tasks}
     log = pd.DataFrame(
         [
             {
+                "OT": ot_text(task.get("nro_ot")),
+                "Trabajo": task.get("tarea", ""),
                 "Fecha": format_datetime(advance.get("created_at")),
                 "Avance": advance.get("action"),
                 "Motivo": advance.get("reason"),
                 "Comentario": advance.get("observation"),
                 "Informado por": advance.get("reporter_name"),
-                "OT": next((task.get("nro_ot") for task in tasks if task["id"] == advance["task_id"]), ""),
-                "Trabajo": next((task.get("tarea") for task in tasks if task["id"] == advance["task_id"]), ""),
+                "Empresa": effective_company(task),
+                "Sector": effective_sector(task),
+                "Cuadrilla": task.get("cuadrilla", ""),
+                "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
+                "KKS/TAG": task.get("kks_tag", ""),
             }
-            for advance in advances
+            for advance in filtered_advances
+            for task in [tasks_by_id.get(advance["task_id"], {})]
         ]
     )
     st.dataframe(log, hide_index=True, use_container_width=True)
@@ -652,12 +682,12 @@ def main() -> None:
     e1, e2 = st.columns(2)
     e1.download_button(
         "Exportar log Excel",
-        data=advances_export(tasks, advances, final_only=False),
+        data=advances_export(filtered, filtered_advances, final_only=False),
         file_name=f"avances_{date.today().isoformat()}.xlsx",
     )
     e2.download_button(
         "Exportar estado final Excel",
-        data=advances_export(tasks, advances, final_only=True),
+        data=advances_export(filtered, filtered_advances, final_only=True),
         file_name=f"estado_final_{date.today().isoformat()}.xlsx",
     )
 
