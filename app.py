@@ -678,20 +678,38 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
         source = filtered
     for advance in source:
         task = tasks_by_id.get(advance["task_id"], {})
+        action = advance.get("action", "")
+        start_date = format_date(task.get("fecha_inicio"))
+        end_date = format_date(task.get("fecha_fin"))
+        program_change = ""
+        wrike_status = ""
+        if final_only:
+            start_date, end_date, program_change = wrike_dates_for_advance(task, advance)
+            wrike_status = status_usuario_for_wrike(action)
         rows.append(
             {
                 "OT": ot_text(task.get("nro_ot")),
                 "Titulo tarea": task_title(task),
-                "Trabajo": task.get("tarea", ""),
                 "Empresa": effective_company(task),
                 "Sector": effective_sector(task),
                 "Cuadrilla": task.get("cuadrilla", ""),
                 "KKS/TAG": task.get("kks_tag", ""),
-                "Fecha inicio": format_date(task.get("fecha_inicio")),
+                "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
+                "Fecha inicio": start_date,
+                "Fecha fin": end_date,
                 "Duracion": task.get("duracion", ""),
-                "Avance": advance.get("action", ""),
+                "Estado": action,
+                **(
+                    {
+                        "Status de usuario": wrike_status,
+                        "Estado Wrike sugerido": wrike_status,
+                        "Modificaciones programa": program_change,
+                    }
+                    if final_only
+                    else {}
+                ),
                 "Motivo": advance.get("reason", ""),
-                "Comentarios": advance.get("observation", ""),
+                "Comentario": advance.get("observation", ""),
                 "Fecha avance": advance_date(advance.get("created_at")),
                 "Hora avance": advance_time(advance.get("created_at")),
                 "Informado por": advance.get("reporter_name", ""),
@@ -1108,7 +1126,7 @@ def main() -> None:
             "Titulo tarea": task_title(task),
             "Fecha modificacion": advance_date(advance.get("created_at")),
             "Hora modificacion": advance_time(advance.get("created_at")),
-            "Avance": advance.get("action"),
+            "Estado": advance.get("action"),
             "Motivo": advance.get("reason"),
             "Comentario": advance.get("observation"),
             "Informado por": advance.get("reporter_name"),
@@ -1117,7 +1135,6 @@ def main() -> None:
             "Cuadrilla": task.get("cuadrilla", ""),
             "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
             "KKS/TAG": task.get("kks_tag", ""),
-            "Trabajo": task.get("tarea", ""),
         }
         for advance in filtered_advances
         for task in [tasks_by_id.get(advance["task_id"], {})]
