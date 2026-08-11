@@ -907,6 +907,16 @@ def combined_comment(advance: dict[str, Any]) -> str:
     return reason or observation
 
 
+def hide_kks_for_tasks(tasks: list[dict[str, Any]]) -> bool:
+    return bool(tasks) and all(task_area(task) == "DISTRIBUCION" for task in tasks)
+
+
+def strip_kks_if_distribution(rows: list[dict[str, Any]], tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not hide_kks_for_tasks(tasks):
+        return rows
+    return [{key: value for key, value in row.items() if key != "KKS/TAG"} for row in rows]
+
+
 def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]], final_only: bool = False) -> bytes:
     tasks_by_id = {task["id"]: task for task in tasks}
     rows = []
@@ -959,6 +969,7 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
                 "Empresa informante": advance.get("reporter_company", ""),
             }
         )
+    rows = strip_kks_if_distribution(rows, tasks)
     return write_excel(rows, sheet_name="Avances")
 
 
@@ -1464,13 +1475,14 @@ def main() -> None:
         for advance in source_advances
         for task in [tasks_by_id.get(advance["task_id"], {})]
     ]
-    log = pd.DataFrame([{key: value for key, value in row.items() if key != "_advance_id"} for row in log_rows])
+    display_log_rows = strip_kks_if_distribution(log_rows, filtered_base)
+    log = pd.DataFrame([{key: value for key, value in row.items() if key != "_advance_id"} for row in display_log_rows])
     st.dataframe(log, hide_index=True, use_container_width=True)
 
     if st.session_state.role == "admin" and advances:
         with st.expander("Administracion de registros", expanded=False):
-            if log_rows:
-                delete_df = pd.DataFrame([{**{"Eliminar": False}, **row} for row in log_rows])
+            if display_log_rows:
+                delete_df = pd.DataFrame([{**{"Eliminar": False}, **row} for row in display_log_rows])
                 edited_delete = st.data_editor(
                     delete_df,
                     hide_index=True,
