@@ -35,6 +35,8 @@ def secret(name: str, default: str = "") -> str:
 
 
 SUPABASE_URL = secret("SUPABASE_URL").rstrip("/")
+if SUPABASE_URL.endswith("/rest/v1"):
+    SUPABASE_URL = SUPABASE_URL[: -len("/rest/v1")]
 SUPABASE_KEY = secret("SUPABASE_KEY")
 ACCESS_PASSWORD = secret("ACCESS_PASSWORD", "Energia2026")
 ADMIN_PASSWORD = secret("ADMIN_PASSWORD", "36719317")
@@ -70,41 +72,77 @@ def api_url(table: str) -> str:
     return f"{SUPABASE_URL}/rest/v1/{table}"
 
 
+def stop_supabase_error(response: requests.Response, action: str) -> None:
+    message = response.text.strip()
+    try:
+        payload = response.json()
+        message = json.dumps(payload, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    st.error(f"Error de Supabase al {action}. Codigo HTTP: {response.status_code}")
+    if response.status_code in {401, 403}:
+        st.warning("Revisar SUPABASE_KEY y los permisos/grants del SQL.")
+    elif response.status_code == 404:
+        st.warning("Revisar que existan las tablas public.programs, public.tasks y public.advances.")
+    st.code(message[:2000] or "Sin detalle devuelto por Supabase.")
+    st.stop()
+
+
 def sb_get(table: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
-    response = requests.get(api_url(table), headers=supabase_headers(), params=params or {}, timeout=30)
+    try:
+        response = requests.get(api_url(table), headers=supabase_headers(), params=params or {}, timeout=30)
+    except requests.RequestException as exc:
+        st.error("No se pudo conectar con Supabase.")
+        st.code(str(exc))
+        st.stop()
     if not response.ok:
-        raise RuntimeError(response.text)
+        stop_supabase_error(response, f"leer {table}")
     return response.json()
 
 
 def sb_insert(table: str, rows: list[dict[str, Any]] | dict[str, Any]) -> list[dict[str, Any]]:
-    response = requests.post(
-        api_url(table),
-        headers=supabase_headers("return=representation"),
-        data=json.dumps(rows, default=str),
-        timeout=60,
-    )
+    try:
+        response = requests.post(
+            api_url(table),
+            headers=supabase_headers("return=representation"),
+            data=json.dumps(rows, default=str),
+            timeout=60,
+        )
+    except requests.RequestException as exc:
+        st.error("No se pudo conectar con Supabase.")
+        st.code(str(exc))
+        st.stop()
     if not response.ok:
-        raise RuntimeError(response.text)
+        stop_supabase_error(response, f"guardar en {table}")
     return response.json()
 
 
 def sb_patch(table: str, params: dict[str, str], values: dict[str, Any]) -> None:
-    response = requests.patch(
-        api_url(table),
-        headers=supabase_headers(),
-        params=params,
-        data=json.dumps(values, default=str),
-        timeout=30,
-    )
+    try:
+        response = requests.patch(
+            api_url(table),
+            headers=supabase_headers(),
+            params=params,
+            data=json.dumps(values, default=str),
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        st.error("No se pudo conectar con Supabase.")
+        st.code(str(exc))
+        st.stop()
     if not response.ok:
-        raise RuntimeError(response.text)
+        stop_supabase_error(response, f"actualizar {table}")
 
 
 def sb_delete(table: str, params: dict[str, str]) -> None:
-    response = requests.delete(api_url(table), headers=supabase_headers(), params=params, timeout=30)
+    try:
+        response = requests.delete(api_url(table), headers=supabase_headers(), params=params, timeout=30)
+    except requests.RequestException as exc:
+        st.error("No se pudo conectar con Supabase.")
+        st.code(str(exc))
+        st.stop()
     if not response.ok:
-        raise RuntimeError(response.text)
+        stop_supabase_error(response, f"eliminar de {table}")
 
 
 def login_screen() -> None:
