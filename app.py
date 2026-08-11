@@ -89,9 +89,37 @@ def normalize_crew(value: Any) -> str:
     return text
 
 
+def canonical_company(value: Any) -> str:
+    norm = compact_key(value)
+    if not norm:
+        return ""
+    if "manpetrol" in norm or norm in {"mp", "manpet"}:
+        return "MANPETROL"
+    if "sanfran" in norm or "sanyfran" in norm or norm in {"sf", "sanf"}:
+        return "SAN&FRAN"
+    if norm in {"otra", "otro", "otros", "otras"}:
+        return "OTRA"
+    return str(value or "").strip()
+
+
+def canonical_sector(value: Any) -> str:
+    norm = compact_key(value)
+    if not norm:
+        return ""
+    if "elect" in norm or norm in {"elec", "pdgelec", "pdegelec", "pdgelect", "pdgelectrico"}:
+        return "Electricidad"
+    if "inst" in norm or norm in {"pdginst", "pdeginst", "pdginstrumentacion"}:
+        return "Instrumentacion"
+    if "mec" in norm or "mecan" in norm or norm in {"pdgmec", "pdegmeca", "pdgmecanica"}:
+        return "Mecanica"
+    if norm in {"otro", "otros", "otras"}:
+        return "Otros"
+    return str(value or "").strip()
+
+
 def infer_company_sector(cuadrilla: Any) -> tuple[str, str]:
     crew = normalize_crew(cuadrilla)
-    if crew in {"555", "555A"}:
+    if crew in {"555", "555A", "A555"}:
         return "MANPETROL", "Electricidad"
     if crew in {"556A", "556B", "556C"}:
         return "MANPETROL", "Instrumentacion"
@@ -101,13 +129,14 @@ def infer_company_sector(cuadrilla: Any) -> tuple[str, str]:
 
 
 def effective_company(task: dict[str, Any]) -> str:
-    value = str(task.get("empresa") or "").strip()
+    value = canonical_company(task.get("empresa"))
     inferred, _ = infer_company_sector(task.get("cuadrilla"))
-    return value or inferred
+    crew_company = canonical_company(task.get("cuadrilla"))
+    return value or inferred or crew_company
 
 
 def effective_sector(task: dict[str, Any]) -> str:
-    value = str(task.get("sector") or "").strip()
+    value = canonical_sector(task.get("sector"))
     _, inferred = infer_company_sector(task.get("cuadrilla"))
     return value or inferred
 
@@ -415,8 +444,8 @@ def map_excel(df: pd.DataFrame) -> list[dict[str, Any]]:
         end = parse_date(row.get(mapping["fecha_fin"])) if mapping["fecha_fin"] else None
         cuadrilla = row_text(row, mapping["cuadrilla"])
         inferred_company, inferred_sector = infer_company_sector(cuadrilla)
-        empresa = row_text(row, mapping["empresa"]) or inferred_company
-        sector = row_text(row, mapping["sector"]) or inferred_sector
+        empresa = canonical_company(row_text(row, mapping["empresa"])) or inferred_company or canonical_company(cuadrilla)
+        sector = canonical_sector(row_text(row, mapping["sector"])) or inferred_sector
         raw = {str(col): (None if pd.isna(row.get(col)) else str(row.get(col))) for col in columns}
         digest = hashlib.sha1(json.dumps(raw, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         tasks.append(
