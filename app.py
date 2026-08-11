@@ -178,6 +178,13 @@ def sb_delete(table: str, params: dict[str, str]) -> None:
         stop_supabase_error(response, f"eliminar de {table}")
 
 
+def delete_advances(advance_ids: list[str]) -> None:
+    clean_ids = [item for item in advance_ids if item]
+    for start in range(0, len(clean_ids), 100):
+        chunk = ",".join(clean_ids[start : start + 100])
+        sb_delete("advances", {"id": f"in.({chunk})"})
+
+
 def login_screen() -> None:
     st.title(APP_TITLE)
     st.subheader("Trabajos programados")
@@ -286,6 +293,43 @@ def ot_text(value: Any) -> str:
     except Exception:
         pass
     return text
+
+
+def raw_value(task: dict[str, Any], candidates: list[str]) -> str:
+    raw = task.get("raw") or {}
+    if not isinstance(raw, dict):
+        return ""
+    normalized = {normalize(key): value for key, value in raw.items()}
+    for candidate in candidates:
+        value = normalized.get(normalize(candidate))
+        if value not in (None, ""):
+            return str(value).strip()
+    for key, value in normalized.items():
+        if value in (None, ""):
+            continue
+        if any(normalize(candidate) in key for candidate in candidates):
+            return str(value).strip()
+    return ""
+
+
+def task_title(task: dict[str, Any]) -> str:
+    title = raw_value(
+        task,
+        [
+            "title",
+            "titulo",
+            "titulo tarea",
+            "titulo de tarea",
+            "descripcion",
+            "descripcion tarea",
+            "description",
+            "task title",
+            "nombre tarea",
+        ],
+    )
+    if title:
+        return title
+    return str(task.get("tarea") or "").strip()
 
 
 def map_excel(df: pd.DataFrame) -> list[dict[str, Any]]:
@@ -417,6 +461,7 @@ def apply_filters(tasks: list[dict[str, Any]], company: str, sector: str, crew: 
         if end_iso and task_start and task_start > end_iso:
             continue
         haystack = normalize(" ".join(str(task.get(key) or "") for key in ["nro_ot", "tarea", "cuadrilla", "ubicacion_tecnica", "kks_tag"]))
+        haystack = normalize(f"{haystack} {task_title(task)}")
         if text_norm and text_norm not in haystack:
             continue
         output.append(task)
@@ -442,6 +487,7 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
             {
                 "Seleccionar": False,
                 "Trabajo": task.get("tarea") or "",
+                "Titulo tarea": task_title(task),
                 "Fecha inicio": format_date(task.get("fecha_inicio")),
                 "Duracion": f"{task.get('duracion') or 1} dia(s)",
                 "Estado": status,
@@ -520,6 +566,7 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
             {
                 "OT": ot_text(task.get("nro_ot")),
                 "Trabajo": task.get("tarea", ""),
+                "Titulo tarea": task_title(task),
                 "Empresa": effective_company(task),
                 "Sector": effective_sector(task),
                 "Cuadrilla": task.get("cuadrilla", ""),
@@ -560,11 +607,7 @@ def main() -> None:
         st.info("No hay programas activos. Ingresar como administrador y cargar un Excel.")
         return
 
-    program_col, refresh_col = st.columns([5, 1])
-    program = program_col.selectbox("Programa", programs, format_func=lambda item: item["name"])
-    if refresh_col.button("Actualizar datos", use_container_width=True):
-        st.session_state.pop("task_editor", None)
-        st.rerun()
+    program = st.selectbox("Programa", programs, format_func=lambda item: item["name"], key="program_filter")
     tasks = load_tasks(program["id"])
     advances = load_advances(program["id"])
     latest = latest_status_by_task(advances)
@@ -576,18 +619,24 @@ def main() -> None:
     crews = [""] + sorted({task.get("cuadrilla") or "" for task in scoped_tasks if task.get("cuadrilla")})
 
     col1, col2, col3 = st.columns(3)
-    crew = col1.selectbox("Cuadrilla", crews, format_func=lambda item: option_label(item, "Todas"))
-    start = col2.date_input("Fecha inicio", value=None, format="DD/MM/YYYY")
-    end = col3.date_input("Fecha fin", value=None, format="DD/MM/YYYY")
-    text = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG")
+    crew = col1.selectbox("Cuadrilla", crews, format_func=lambda item: option_label(item, "Todas"), key="crew_filter")
+    start = col2.date_input("Fecha inicio", value=None, format="DD/MM/YYYY", key="start_filter")
+    end = col3.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
+    text = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG", key="text_filter")
 
     filtered = apply_filters(tasks, company, sector, crew, start, end, text)
     st.caption(f"{len(filtered)} tarea(s) visibles de {len(scoped_tasks)} cargadas para el perfil seleccionado.")
     visible_task_ids = {task["id"] for task in filtered}
     filtered_advances = [advance for advance in advances if advance.get("task_id") in visible_task_ids]
 
+    pending_changes = st.session_state.setdefault("pending_state_changes", {})
     df = task_dataframe(filtered, latest)
-    inline_entries_by_task: dict[str, dict[str, str]] = {}
+    for index, row in df.iterrows():
+        task_id = str(row["_task_id"])
+        if task_id in pending_changes:
+            df.at[index, "Estado"] = pending_changes[task_id]
+            df.at[index, "Seleccionar"] = True
+
     editor_state = st.session_state.get("task_editor", {})
     if isinstance(editor_state, dict):
         for row_index, changes in editor_state.get("edited_rows", {}).items():
@@ -603,7 +652,7 @@ def main() -> None:
                     if new_status and new_status != original_status:
                         df.at[index, "Seleccionar"] = True
                         task_id = str(df.at[index, "_task_id"])
-                        inline_entries_by_task[task_id] = {"task_id": task_id, "action": new_status}
+                        pending_changes[task_id] = new_status
     edited = st.data_editor(
         df,
         hide_index=True,
@@ -618,66 +667,155 @@ def main() -> None:
         key="task_editor",
     )
     if edited.empty:
-        selected_rows = edited
-        manual_entries_by_task: dict[str, dict[str, str]] = {}
+        selected_task_ids: list[str] = []
     else:
-        selected_rows = edited.loc[edited["Seleccionar"] == True].copy()
-        manual_entries_by_task = {
-            str(row["_task_id"]): {"task_id": str(row["_task_id"]), "action": ""}
-            for _, row in selected_rows.iterrows()
-        }
-    selected_ids = sorted(set(manual_entries_by_task) | set(inline_entries_by_task))
+        for _, row in edited.iterrows():
+            task_id = str(row["_task_id"])
+            status = str(row["Estado"] or "")
+            original_status = str(row["_estado_original"] or "")
+            if status and status != original_status:
+                pending_changes[task_id] = status
+            elif task_id in pending_changes:
+                pending_changes.pop(task_id, None)
+        selected_task_ids = [str(item) for item in edited.loc[edited["Seleccionar"] == True, "_task_id"].tolist()]
+    pending_visible_ids = sorted(task_id for task_id in pending_changes if task_id in visible_task_ids)
 
-    st.subheader("Informar seleccionadas")
+    st.subheader("Cambiar estado")
     c1, c2, c3 = st.columns([1, 1, 2])
-    action = c1.selectbox("Avance por defecto", ACTIONS)
-    entries_by_task = {task_id: {"task_id": task_id, "action": action} for task_id in manual_entries_by_task}
-    entries_by_task.update(inline_entries_by_task)
-    entries = list(entries_by_task.values())
+    action = c1.selectbox("Estado para seleccionadas", ACTIONS)
+    if c2.button("Cambiar estado", disabled=not selected_task_ids, use_container_width=True):
+        for task_id in selected_task_ids:
+            pending_changes[task_id] = action
+        st.session_state.pop("task_editor", None)
+        st.rerun()
+    entries = [{"task_id": task_id, "action": pending_changes[task_id]} for task_id in pending_visible_ids]
     selected_actions = [entry["action"] for entry in entries]
     reason = ""
     if "EN ESPERA" in selected_actions:
-        reason = c2.selectbox("Motivo", WAIT_REASONS)
+        reason = c3.selectbox("Motivo para EN ESPERA", WAIT_REASONS)
     observation_required = any(item in {"REPLANIFICAR", "COMENTARIO"} for item in selected_actions) or (
         "EN ESPERA" in selected_actions and reason == "Otros"
     )
-    observation = c3.text_input(
+    observation = st.text_input(
         "Comentario comun" if observation_required else "Comentario opcional",
-        placeholder="Se aplicara a todas las tareas seleccionadas",
+        placeholder="Se aplicara a todos los avances pendientes",
     )
-    if st.button("Guardar avance para seleccionadas", type="primary", disabled=not selected_ids):
+
+    def pending_is_valid() -> bool:
         if "EN ESPERA" in selected_actions and not reason:
             st.warning("Elegir motivo para EN ESPERA.")
-        elif observation_required and not observation.strip():
+            return False
+        if observation_required and not observation.strip():
             st.warning("Escribir el comentario comun para las tareas seleccionadas.")
+            return False
+        return True
+
+    update_col, pending_col = st.columns([1, 4])
+    if update_col.button("Actualizar datos", use_container_width=True):
+        if pending_visible_ids:
+            st.session_state.confirm_refresh = True
         else:
+            st.session_state.pop("task_editor", None)
+            st.rerun()
+    if pending_visible_ids:
+        pending_col.caption(f"{len(pending_visible_ids)} avance(s) pendiente(s) de guardar.")
+
+    if st.session_state.get("confirm_refresh"):
+        st.warning("Hay avances pendientes sin guardar. Elegi como continuar antes de actualizar datos.")
+        r1, r2, r3 = st.columns(3)
+        if r1.button("Guardar avances y actualizar", type="primary"):
+            if pending_is_valid():
+                save_advance_entries(program["id"], entries, reason, observation.strip())
+                for task_id in pending_visible_ids:
+                    pending_changes.pop(task_id, None)
+                st.session_state.pop("task_editor", None)
+                st.session_state.pop("confirm_refresh", None)
+                st.rerun()
+        if r2.button("Actualizar sin guardar"):
+            for task_id in pending_visible_ids:
+                pending_changes.pop(task_id, None)
+            st.session_state.pop("task_editor", None)
+            st.session_state.pop("confirm_refresh", None)
+            st.rerun()
+        if r3.button("Cancelar"):
+            st.session_state.pop("confirm_refresh", None)
+            st.rerun()
+
+    if st.button("Guardar avances", type="primary", disabled=not pending_visible_ids):
+        if pending_is_valid():
             save_advance_entries(program["id"], entries, reason, observation.strip())
-            st.success(f"{len(selected_ids)} avance(s) guardado(s).")
+            for task_id in pending_visible_ids:
+                pending_changes.pop(task_id, None)
+            st.session_state.pop("task_editor", None)
+            st.session_state.pop("confirm_refresh", None)
+            st.success(f"{len(pending_visible_ids)} avance(s) guardado(s).")
             st.rerun()
 
     st.subheader("Avances / registros")
     tasks_by_id = {task["id"]: task for task in tasks}
-    log = pd.DataFrame(
-        [
-            {
-                "OT": ot_text(task.get("nro_ot")),
-                "Trabajo": task.get("tarea", ""),
-                "Fecha": format_datetime(advance.get("created_at")),
-                "Avance": advance.get("action"),
-                "Motivo": advance.get("reason"),
-                "Comentario": advance.get("observation"),
-                "Informado por": advance.get("reporter_name"),
-                "Empresa": effective_company(task),
-                "Sector": effective_sector(task),
-                "Cuadrilla": task.get("cuadrilla", ""),
-                "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
-                "KKS/TAG": task.get("kks_tag", ""),
-            }
-            for advance in filtered_advances
-            for task in [tasks_by_id.get(advance["task_id"], {})]
-        ]
-    )
+    log_rows = [
+        {
+            "_advance_id": advance.get("id", ""),
+            "OT": ot_text(task.get("nro_ot")),
+            "Trabajo": task.get("tarea", ""),
+            "Titulo tarea": task_title(task),
+            "Fecha": format_datetime(advance.get("created_at")),
+            "Avance": advance.get("action"),
+            "Motivo": advance.get("reason"),
+            "Comentario": advance.get("observation"),
+            "Informado por": advance.get("reporter_name"),
+            "Empresa": effective_company(task),
+            "Sector": effective_sector(task),
+            "Cuadrilla": task.get("cuadrilla", ""),
+            "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
+            "KKS/TAG": task.get("kks_tag", ""),
+        }
+        for advance in filtered_advances
+        for task in [tasks_by_id.get(advance["task_id"], {})]
+    ]
+    log = pd.DataFrame([{key: value for key, value in row.items() if key != "_advance_id"} for row in log_rows])
     st.dataframe(log, hide_index=True, use_container_width=True)
+
+    if st.session_state.role == "admin" and advances:
+        with st.expander("Administracion de registros", expanded=False):
+            if log_rows:
+                delete_df = pd.DataFrame([{**{"Eliminar": False}, **row} for row in log_rows])
+                edited_delete = st.data_editor(
+                    delete_df,
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=[column for column in delete_df.columns if column != "Eliminar"],
+                    column_config={
+                        "_advance_id": None,
+                        "Eliminar": st.column_config.CheckboxColumn("Eliminar"),
+                    },
+                    key="delete_advances_editor",
+                )
+                selected_delete_ids = (
+                    edited_delete.loc[edited_delete["Eliminar"] == True, "_advance_id"].tolist()
+                    if not edited_delete.empty
+                    else []
+                )
+            else:
+                st.info("No hay registros visibles con los filtros actuales.")
+                selected_delete_ids = []
+            d1, d2, d3 = st.columns(3)
+            if d1.button("Eliminar seleccionados", disabled=not selected_delete_ids):
+                delete_advances(selected_delete_ids)
+                st.session_state.pop("delete_advances_editor", None)
+                st.success(f"{len(selected_delete_ids)} registro(s) eliminado(s).")
+                st.rerun()
+            if d2.button("Eliminar visibles por filtros", disabled=not filtered_advances):
+                delete_advances([advance["id"] for advance in filtered_advances])
+                st.session_state.pop("delete_advances_editor", None)
+                st.success("Registros visibles eliminados.")
+                st.rerun()
+            confirm_all = st.checkbox("Confirmo eliminar todos los registros de avances del programa activo")
+            if d3.button("Eliminar todo el programa", disabled=not confirm_all):
+                delete_advances([advance["id"] for advance in advances])
+                st.session_state.pop("delete_advances_editor", None)
+                st.success("Registros del programa eliminados.")
+                st.rerun()
 
     e1, e2 = st.columns(2)
     e1.download_button(
