@@ -129,7 +129,7 @@ def login_screen() -> None:
 def profile_screen() -> None:
     st.title(APP_TITLE)
     st.subheader("Ingreso al programa")
-    with st.form("profile"):
+    with st.form("profile_form"):
         company = st.selectbox("Empresa", COMPANIES, index=0)
         sector = st.selectbox("Sector", SECTORS, index=0)
         name = st.text_input("Nombre", placeholder="Nombre y apellido / rol")
