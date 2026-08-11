@@ -348,12 +348,24 @@ def login_screen() -> None:
 def profile_screen() -> None:
     st.title(APP_TITLE)
     st.subheader("Ingreso al programa")
+    area = st.selectbox("Area", AREAS, index=0, key="profile_area_select")
+    company_options = COMPANIES_BY_AREA[area]
+    sector_options = SECTORS_BY_AREA[area]
     with st.form("profile_form"):
-        area = st.selectbox("Area", AREAS, index=0)
-        company_options = COMPANIES_BY_AREA[area]
-        sector_options = SECTORS_BY_AREA[area]
-        company = st.selectbox("Empresa", company_options, index=0, format_func=lambda item: option_label(item, "Todas"))
-        sector = st.selectbox("Sector", sector_options, index=0, format_func=lambda item: option_label(item, "Todos"))
+        company = st.selectbox(
+            "Empresa",
+            company_options,
+            index=0,
+            format_func=lambda item: option_label(item, "Todas"),
+            key=f"profile_company_{area}",
+        )
+        sector = st.selectbox(
+            "Sector",
+            sector_options,
+            index=0,
+            format_func=lambda item: option_label(item, "Todos"),
+            key=f"profile_sector_{area}",
+        )
         name = st.text_input("Nombre", placeholder="Nombre y apellido / rol")
         if st.form_submit_button("Ingresar", type="primary"):
             if not name.strip():
