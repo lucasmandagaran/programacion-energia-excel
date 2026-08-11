@@ -383,20 +383,93 @@ def require_session() -> None:
         profile_screen()
 
 
+FILTER_KEYS = ["program_filter", "crew_filter", "start_filter", "end_filter", "text_filter", "show_all_tasks_filter"]
+
+
+def has_pending_work() -> bool:
+    pending = st.session_state.get("pending_state_changes", {})
+    comment = str(st.session_state.get("common_comment_text") or "").strip()
+    return bool(pending) or bool(comment)
+
+
+def clear_pending_work() -> None:
+    st.session_state.pop("pending_state_changes", None)
+    st.session_state.pop("pending_program_id", None)
+    st.session_state.pop("task_editor", None)
+    st.session_state.clear_comment_text_next = True
+    st.session_state.pop("confirm_refresh", None)
+    st.session_state.pop("pending_navigation", None)
+    st.session_state.pop("filter_change_guard", None)
+
+
+def current_filter_state(program_id: str) -> dict[str, Any]:
+    return {
+        "program_id": program_id,
+        "program_filter": st.session_state.get("program_filter"),
+        "crew_filter": st.session_state.get("crew_filter", ""),
+        "start_filter": st.session_state.get("start_filter"),
+        "end_filter": st.session_state.get("end_filter"),
+        "text_filter": st.session_state.get("text_filter", ""),
+        "show_all_tasks_filter": bool(st.session_state.get("show_all_tasks_filter", False)),
+    }
+
+
+def restore_filter_state(state: dict[str, Any] | None) -> None:
+    if not state:
+        return
+    for key in FILTER_KEYS:
+        if key in state:
+            st.session_state[key] = state[key]
+
+
+def request_navigation(action: str) -> None:
+    if has_pending_work():
+        st.session_state.pending_navigation = action
+    elif action == "profile":
+        st.session_state.pop("profile", None)
+        st.rerun()
+    elif action == "logout":
+        st.session_state.clear()
+        st.rerun()
+
+
+def apply_navigation(action: str) -> None:
+    if action == "profile":
+        clear_pending_work()
+        st.session_state.pop("profile", None)
+        st.rerun()
+    if action == "logout":
+        st.session_state.clear()
+        st.rerun()
+
+
+def undo_last_change() -> None:
+    if has_pending_work():
+        clear_pending_work()
+        st.rerun()
+    previous = st.session_state.get("previous_filter_state")
+    if previous:
+        restore_filter_state(previous)
+        st.session_state.last_filter_state = previous
+        st.session_state.pop("previous_filter_state", None)
+        st.session_state.pop("task_editor", None)
+        st.rerun()
+
+
 def logout_controls() -> None:
-    col1, col2, col3 = st.columns([3, 1, 1])
+    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
     profile = st.session_state.profile
     role = "Administrador" if st.session_state.role == "admin" else "Usuario"
     area = canonical_area(profile.get("area") or "GENERACION")
     col1.caption(
         f"{role}: {profile['name']} - {area} - {profile.get('company') or 'Todas'} / {profile.get('sector') or 'Todos'}"
     )
-    if col2.button("Cambiar perfil"):
-        st.session_state.pop("profile", None)
-        st.rerun()
-    if col3.button("Cerrar sesion"):
-        st.session_state.clear()
-        st.rerun()
+    if col2.button("Deshacer"):
+        undo_last_change()
+    if col3.button("Volver al inicio"):
+        request_navigation("profile")
+    if col4.button("Cerrar sesion"):
+        request_navigation("logout")
 
 
 def find_column(columns: list[str], candidates: list[str]) -> str | None:
@@ -1082,6 +1155,8 @@ def format_datetime(value: Any) -> str:
 
 def main() -> None:
     require_session()
+    if st.session_state.pop("clear_comment_text_next", False):
+        st.session_state.pop("common_comment_text", None)
     st.title(APP_TITLE)
     logout_controls()
     admin_panel()
@@ -1109,6 +1184,20 @@ def main() -> None:
     end = col3.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
     text = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG", key="text_filter")
     show_all_tasks = st.checkbox("Mostrar todas las tareas", value=False, key="show_all_tasks_filter")
+
+    filters_now = current_filter_state(program["id"])
+    filters_before = st.session_state.get("last_filter_state")
+    if filters_before is None:
+        st.session_state.last_filter_state = filters_now
+    elif filters_now != filters_before:
+        if has_pending_work():
+            st.session_state.filter_change_guard = {
+                "previous": filters_before,
+                "current": filters_now,
+            }
+        else:
+            st.session_state.previous_filter_state = filters_before
+            st.session_state.last_filter_state = filters_now
 
     filtered_base = apply_filters(tasks, company, sector, crew, start, end, text)
     if show_all_tasks:
@@ -1152,6 +1241,7 @@ def main() -> None:
                         df.at[index, "Seleccionar"] = True
                         task_id = str(df.at[index, "_task_id"])
                         pending_changes[task_id] = new_status
+                        st.session_state.pending_program_id = program["id"]
                         if new_status == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
                             df.at[index, "Fecha inicio"] = date.today().strftime("%d/%m/%Y")
     edited = st.data_editor(
@@ -1176,10 +1266,12 @@ def main() -> None:
             original_status = str(row["_estado_original"] or "")
             if status and status != original_status:
                 pending_changes[task_id] = status
+                st.session_state.pending_program_id = program["id"]
             elif task_id in pending_changes:
                 pending_changes.pop(task_id, None)
         selected_task_ids = [str(item) for item in edited.loc[edited["Seleccionar"] == True, "_task_id"].tolist()]
     pending_visible_ids = sorted(task_id for task_id in pending_changes if task_id in visible_task_ids)
+    pending_all_ids = sorted(pending_changes)
 
     st.subheader("Cambiar estado")
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -1187,9 +1279,10 @@ def main() -> None:
     if c2.button("Cambiar estado", disabled=not selected_task_ids, use_container_width=True):
         for task_id in selected_task_ids:
             pending_changes[task_id] = action
+        st.session_state.pending_program_id = program["id"]
         st.session_state.pop("task_editor", None)
         st.rerun()
-    entries = [{"task_id": task_id, "action": pending_changes[task_id]} for task_id in pending_visible_ids]
+    entries = [{"task_id": task_id, "action": pending_changes[task_id]} for task_id in pending_all_ids]
     selected_actions = [entry["action"] for entry in entries]
     reason = ""
     if any(item in REASON_ACTIONS for item in selected_actions):
@@ -1215,50 +1308,91 @@ def main() -> None:
 
     update_col, pending_col = st.columns([1, 4])
     if update_col.button("Actualizar datos", use_container_width=True):
-        if pending_visible_ids:
+        if pending_all_ids:
             st.session_state.confirm_refresh = True
         else:
             st.session_state.pop("task_editor", None)
             st.rerun()
-    if pending_visible_ids:
-        pending_col.caption(f"{len(pending_visible_ids)} avance(s) pendiente(s) de guardar.")
+    if pending_all_ids:
+        pending_col.caption(f"{len(pending_all_ids)} avance(s) pendiente(s) de guardar.")
+
+    def save_current_pending_work() -> bool:
+        save_program_id = st.session_state.get("pending_program_id") or program["id"]
+        if pending_all_ids:
+            if not pending_is_valid():
+                return False
+            save_advance_entries(save_program_id, entries, reason, observation.strip())
+            clear_pending_work()
+            return True
+        if observation.strip() and selected_task_ids:
+            comment_entries = [{"task_id": task_id, "action": "COMENTARIO"} for task_id in selected_task_ids]
+            save_advance_entries(program["id"], comment_entries, "", observation.strip())
+            clear_pending_work()
+            return True
+        st.warning("No hay avances o comentarios seleccionados para guardar.")
+        return False
 
     if st.session_state.get("confirm_refresh"):
         st.warning("Hay avances pendientes sin guardar. Elegi como continuar antes de actualizar datos.")
         r1, r2, r3 = st.columns(3)
         if r1.button("Guardar avances y actualizar", type="primary"):
-            if pending_is_valid():
-                save_advance_entries(program["id"], entries, reason, observation.strip())
-                for task_id in pending_visible_ids:
-                    pending_changes.pop(task_id, None)
-                st.session_state.pop("task_editor", None)
-                st.session_state.pop("confirm_refresh", None)
+            if save_current_pending_work():
                 st.rerun()
         if r2.button("Actualizar sin guardar"):
-            for task_id in pending_visible_ids:
-                pending_changes.pop(task_id, None)
-            st.session_state.pop("task_editor", None)
-            st.session_state.pop("confirm_refresh", None)
+            clear_pending_work()
             st.rerun()
         if r3.button("Cancelar"):
             st.session_state.pop("confirm_refresh", None)
             st.rerun()
 
+    filter_guard = st.session_state.get("filter_change_guard")
+    if filter_guard:
+        st.warning("Cambiaste un filtro y hay avances o comentarios pendientes sin guardar.")
+        f1, f2, f3 = st.columns(3)
+        if f1.button("Guardar y aplicar filtro", type="primary"):
+            previous = filter_guard.get("previous")
+            current = filter_guard.get("current")
+            if save_current_pending_work():
+                st.session_state.previous_filter_state = previous
+                st.session_state.last_filter_state = current
+                st.rerun()
+        if f2.button("Aplicar filtro sin guardar"):
+            previous = filter_guard.get("previous")
+            current = filter_guard.get("current")
+            clear_pending_work()
+            st.session_state.previous_filter_state = previous
+            st.session_state.last_filter_state = current
+            st.rerun()
+        if f3.button("Cancelar cambio de filtro"):
+            restore_filter_state(filter_guard.get("previous"))
+            st.session_state.pop("filter_change_guard", None)
+            st.rerun()
+
+    pending_navigation = st.session_state.get("pending_navigation")
+    if pending_navigation:
+        label = "volver al inicio" if pending_navigation == "profile" else "cerrar sesion"
+        st.warning(f"Hay avances o comentarios pendientes sin guardar antes de {label}.")
+        n1, n2, n3 = st.columns(3)
+        if n1.button("Guardar y continuar", type="primary"):
+            if save_current_pending_work():
+                apply_navigation(pending_navigation)
+        if n2.button("Continuar sin guardar"):
+            clear_pending_work()
+            apply_navigation(pending_navigation)
+        if n3.button("Cancelar salida"):
+            st.session_state.pop("pending_navigation", None)
+            st.rerun()
+
     save_col, comment_col = st.columns([1, 1])
-    if save_col.button("Guardar avances", type="primary", disabled=not pending_visible_ids):
-        if pending_is_valid():
-            save_advance_entries(program["id"], entries, reason, observation.strip())
-            for task_id in pending_visible_ids:
-                pending_changes.pop(task_id, None)
-            st.session_state.pop("task_editor", None)
-            st.session_state.pop("confirm_refresh", None)
+    if save_col.button("Guardar avances", type="primary", disabled=not pending_all_ids):
+        if save_current_pending_work():
             st.success(f"{len(pending_visible_ids)} avance(s) guardado(s).")
             st.rerun()
 
     if comment_col.button("Guardar comentario", disabled=not selected_task_ids or not observation.strip()):
         comment_entries = [{"task_id": task_id, "action": "COMENTARIO"} for task_id in selected_task_ids]
         save_advance_entries(program["id"], comment_entries, "", observation.strip())
-        st.session_state.pop("task_editor", None)
+        clear_pending_work()
         st.success(f"{len(selected_task_ids)} comentario(s) guardado(s).")
         st.rerun()
 
