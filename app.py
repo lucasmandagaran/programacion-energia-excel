@@ -663,6 +663,14 @@ def save_advance_entries(program_id: str, entries: list[dict[str, str]], reason:
     sb_insert("advances", rows)
 
 
+def combined_comment(advance: dict[str, Any]) -> str:
+    reason = str(advance.get("reason") or "").strip()
+    observation = str(advance.get("observation") or "").strip()
+    if reason and observation:
+        return f"{reason} / {observation}"
+    return reason or observation
+
+
 def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]], final_only: bool = False) -> bytes:
     tasks_by_id = {task["id"]: task for task in tasks}
     rows = []
@@ -708,8 +716,7 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
                     if final_only
                     else {}
                 ),
-                "Motivo": advance.get("reason", ""),
-                "Comentario": advance.get("observation", ""),
+                "Comentario": combined_comment(advance),
                 "Fecha avance": advance_date(advance.get("created_at")),
                 "Hora avance": advance_time(advance.get("created_at")),
                 "Informado por": advance.get("reporter_name", ""),
@@ -784,8 +791,7 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
                 "Estado Wrike sugerido": wrike_status,
                 "Modificaciones programa": program_change,
                 "Avance app": action,
-                "Motivo": advance.get("reason", ""),
-                "Comentario": advance.get("observation", ""),
+                "Comentario": combined_comment(advance),
                 "Fecha avance": advance_date(advance.get("created_at")),
                 "Hora avance": advance_time(advance.get("created_at")),
                 "Fecha inicio": start_date,
@@ -804,7 +810,6 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
         "Estado Wrike sugerido",
         "Modificaciones programa",
         "Avance app",
-        "Motivo",
         "Comentario",
         "Fecha avance",
         "Hora avance",
@@ -1127,8 +1132,7 @@ def main() -> None:
             "Fecha modificacion": advance_date(advance.get("created_at")),
             "Hora modificacion": advance_time(advance.get("created_at")),
             "Estado": advance.get("action"),
-            "Motivo": advance.get("reason"),
-            "Comentario": advance.get("observation"),
+            "Comentario": combined_comment(advance),
             "Informado por": advance.get("reporter_name"),
             "Empresa": effective_company(task),
             "Sector": effective_sector(task),
