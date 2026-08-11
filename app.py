@@ -6,8 +6,9 @@ import json
 import os
 import re
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -15,6 +16,7 @@ import streamlit as st
 
 
 APP_TITLE = "Programacion Energia"
+LOCAL_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 AREAS = ["GENERACION", "DISTRIBUCION"]
 COMPANIES_BY_AREA = {
     "GENERACION": ["", "MANPETROL", "SAN&FRAN", "OTRA"],
@@ -760,7 +762,7 @@ def admin_panel() -> None:
         default_area = current_area()
         upload_area = st.selectbox("Area del programa", AREAS, index=AREAS.index(default_area))
         uploaded = st.file_uploader("Excel del programa", type=["xlsx", "xls"])
-        program_name = st.text_input("Nombre del programa", value=f"Programa {date.today().isoformat()}")
+        program_name = st.text_input("Nombre del programa", value=f"Programa {local_today().isoformat()}")
         replace_active = st.checkbox("Dejar este como unico programa activo", value=True)
         if st.button("Publicar programa", type="primary", disabled=uploaded is None):
             with st.spinner("Importando Excel..."):
@@ -1176,24 +1178,38 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
     return write_excel(rows, columns=columns, sheet_name="Wrike avances")
 
 
+def local_today() -> date:
+    return datetime.now(LOCAL_TZ).date()
+
+
+def local_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(LOCAL_TZ)
+    except Exception:
+        return None
+
+
 def advance_date(value: Any) -> str:
     if not value:
         return ""
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    parsed = local_datetime(value)
+    if parsed:
         return parsed.strftime("%d/%m/%Y")
-    except Exception:
-        return str(value)[:10]
+    return str(value)[:10]
 
 
 def advance_time(value: Any) -> str:
     if not value:
         return ""
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    parsed = local_datetime(value)
+    if parsed:
         return parsed.strftime("%H:%M")
-    except Exception:
-        return ""
+    return ""
 
 
 def looks_like_date_column(column: str) -> bool:
@@ -1286,11 +1302,10 @@ def program_updated_export(tasks: list[dict[str, Any]], advances: list[dict[str,
 def format_datetime(value: Any) -> str:
     if not value:
         return ""
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    parsed = local_datetime(value)
+    if parsed:
         return parsed.strftime("%d/%m/%Y %H:%M")
-    except Exception:
-        return str(value)
+    return str(value)
 
 
 def main() -> None:
@@ -1376,7 +1391,7 @@ def main() -> None:
             df.at[index, "Estado"] = pending_changes[task_id]
             df.at[index, "Seleccionar"] = True
             if pending_changes[task_id] == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
-                df.at[index, "Fecha inicio"] = date.today().strftime("%d/%m/%Y")
+                df.at[index, "Fecha inicio"] = local_today().strftime("%d/%m/%Y")
 
     editor_state = st.session_state.get("task_editor", {})
     if isinstance(editor_state, dict):
@@ -1396,7 +1411,7 @@ def main() -> None:
                         pending_changes[task_id] = new_status
                         st.session_state.pending_program_id = program["id"]
                         if new_status == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
-                            df.at[index, "Fecha inicio"] = date.today().strftime("%d/%m/%Y")
+                            df.at[index, "Fecha inicio"] = local_today().strftime("%d/%m/%Y")
     edited = st.data_editor(
         df.style.apply(task_status_style, axis=1),
         hide_index=True,
@@ -1637,12 +1652,12 @@ def main() -> None:
     e1.download_button(
         "Exportar log Excel",
         data=advances_export(filtered_base, filtered_advances, final_only=False),
-        file_name=f"avances_{date.today().isoformat()}.xlsx",
+        file_name=f"avances_{local_today().isoformat()}.xlsx",
     )
     e2.download_button(
         "Exportar estado final Excel",
         data=advances_export(filtered_base, filtered_advances, final_only=True),
-        file_name=f"estado_final_{date.today().isoformat()}.xlsx",
+        file_name=f"estado_final_{local_today().isoformat()}.xlsx",
     )
 
 
