@@ -45,6 +45,13 @@ DISTRIBUTION_SECTORS = {
 STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE"]
 REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
 HIDE_AFTER_SAVE_ACTIONS = {"COMPLETADO", "REPLANIFICAR"}
+STATE_ROW_STYLES = {
+    "COMPLETADO": "background-color: rgba(36, 161, 72, 0.28); color: #d8ffe4; font-weight: 700;",
+    "EN CURSO": "background-color: rgba(31, 111, 235, 0.24); color: #dcebff; font-weight: 700;",
+    "EN ESPERA": "background-color: rgba(214, 158, 46, 0.28); color: #fff4d5; font-weight: 700;",
+    "REPLANIFICAR": "background-color: rgba(248, 81, 73, 0.28); color: #ffe0df; font-weight: 700;",
+    "SIN AVANCE": "background-color: rgba(139, 148, 158, 0.12); color: #f0f3f6;",
+}
 REASONS = [
     "",
     "Pedido Sup PAE",
@@ -132,7 +139,20 @@ def hide_streamlit_chrome() -> None:
         [data-testid="stDecoration"],
         [data-testid="stHeaderActionElements"],
         [data-testid="stStatusWidget"],
+        [data-testid="stLogo"],
+        [data-testid="stAppDeployButton"],
+        [data-testid="stAppCreatorAvatar"],
+        [data-testid="stAppCreatorBadge"],
+        [data-testid="stViewerBadge"],
         .stDeployButton,
+        .viewerBadge_container__1QSob,
+        [class*="viewerBadge"],
+        [class*="ViewerBadge"],
+        [class*="hostedWithStreamlit"],
+        [class*="HostedWithStreamlit"],
+        [class*="creatorAvatar"],
+        [class*="CreatorAvatar"],
+        a[href*="streamlit.io"],
         a[href*="github.com/lucasmandagaran/programacion-energia-excel"] {
             display: none !important;
             visibility: hidden !important;
@@ -886,6 +906,12 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
     return pd.DataFrame(rows)
 
 
+def task_status_style(row: pd.Series) -> list[str]:
+    status = str(row.get("Estado") or "").strip().upper()
+    style = STATE_ROW_STYLES.get(status, "")
+    return [style for _ in row]
+
+
 def hide_task_after_saved(task: dict[str, Any], latest: dict[str, dict[str, Any]]) -> bool:
     advance = latest.get(task["id"], {})
     return str(advance.get("action") or "").strip().upper() in HIDE_AFTER_SAVE_ACTIONS
@@ -1364,7 +1390,7 @@ def main() -> None:
                         if new_status == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
                             df.at[index, "Fecha inicio"] = date.today().strftime("%d/%m/%Y")
     edited = st.data_editor(
-        df,
+        df.style.apply(task_status_style, axis=1),
         hide_index=True,
         use_container_width=True,
         disabled=[column for column in df.columns if column not in {"Seleccionar", "Estado"}],
