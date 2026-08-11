@@ -1558,8 +1558,7 @@ def main() -> None:
                 st.success("Registros del programa eliminados.")
                 st.rerun()
 
-    export_columns = st.columns(4 if st.session_state.role == "admin" else 3)
-    e1, e2, e3 = export_columns[:3]
+    e1, e2 = st.columns(2)
     e1.download_button(
         "Exportar log Excel",
         data=advances_export(filtered_base, filtered_advances, final_only=False),
@@ -1570,17 +1569,6 @@ def main() -> None:
         data=advances_export(filtered_base, filtered_advances, final_only=True),
         file_name=f"estado_final_{date.today().isoformat()}.xlsx",
     )
-    e3.download_button(
-        "Exportar programa actualizado Excel",
-        data=program_updated_export(scoped_tasks, scoped_advances),
-        file_name=f"programa_actualizado_{date.today().isoformat()}.xlsx",
-    )
-    if st.session_state.role == "admin":
-        export_columns[3].download_button(
-            "Exportar avances para Wrike",
-            data=wrike_advances_export(filtered_base, filtered_advances),
-            file_name="avances_cuadrillas_wrike.xlsx",
-        )
 
 
 if __name__ == "__main__":
