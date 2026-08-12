@@ -560,6 +560,7 @@ def has_pending_work() -> bool:
 def clear_pending_work() -> None:
     st.session_state.pop("pending_state_changes", None)
     st.session_state.pop("pending_program_id", None)
+    st.session_state.pop("selected_task_ids", None)
     st.session_state.pop("task_editor", None)
     st.session_state.clear_comment_text_next = True
     st.session_state.pop("confirm_refresh", None)
@@ -1573,9 +1574,12 @@ def main() -> None:
     scoped_advances = [advance for advance in advances if advance.get("task_id") in scoped_task_ids]
 
     pending_changes = st.session_state.setdefault("pending_state_changes", {})
+    selected_task_state = set(st.session_state.setdefault("selected_task_ids", []))
     df = task_dataframe(filtered, latest)
     for index, row in df.iterrows():
         task_id = str(row["_task_id"])
+        if task_id in selected_task_state:
+            df.at[index, "Seleccionar"] = True
         if task_id in pending_changes:
             df.at[index, "Estado"] = pending_changes[task_id]
             df.at[index, "Seleccionar"] = True
@@ -1748,6 +1752,14 @@ def main() -> None:
         key="task_editor",
     )
     if not edited.empty:
+        previous_visible_selection = selected_task_state.intersection(visible_task_ids)
+        selected_task_state.difference_update(visible_task_ids)
+        current_visible_selection = {
+            str(df.at[index, "_task_id"])
+            for index in edited.index[edited["Seleccionar"] == True].tolist()
+            if index in df.index
+        }
+        selected_task_state.update(current_visible_selection)
         for index, row in edited.iterrows():
             if index not in df.index:
                 continue
@@ -1759,6 +1771,9 @@ def main() -> None:
                 st.session_state.pending_program_id = program["id"]
             elif task_id in pending_changes:
                 pending_changes.pop(task_id, None)
+        st.session_state.selected_task_ids = sorted(selected_task_state)
+        if current_visible_selection != previous_visible_selection:
+            st.rerun()
 
     title_col, view_col = st.columns([2, 1])
     title_col.subheader("Avances / registros")
