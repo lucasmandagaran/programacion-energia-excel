@@ -1489,7 +1489,7 @@ def main() -> None:
         {effective_sector(task) for task in scoped_tasks if effective_sector(task)},
         key=lambda item: normalize(item),
     )
-    f1, f2, f3, f4 = st.columns([1.15, 1.65, 0.75, 0.75])
+    f1, f2, f3, f4, f5 = st.columns([1.05, 1.4, 0.72, 0.72, 1.45])
     inner_sector = f1.selectbox(
         "Sector",
         inner_sector_options,
@@ -1503,9 +1503,8 @@ def main() -> None:
     crew = f2.multiselect("Cuadrilla", crew_options, placeholder="Todas", key="crew_filter")
     start = f3.date_input("Fecha inicio", value=None, format="DD/MM/YYYY", key="start_filter")
     end = f4.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
-    search_input_col, active_search_col, show_col = st.columns([1.75, 2.15, 0.95])
     active_search_terms = st.session_state.setdefault("search_terms_filter", [])
-    with search_input_col.form("search_filter_form", clear_on_submit=True):
+    with f5.form("search_filter_form", clear_on_submit=True):
         search_field = st.selectbox("Buscar por", list(SEARCH_FIELD_OPTIONS.keys()))
         search_value = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG")
         add_search = st.form_submit_button("Agregar filtro", use_container_width=True)
@@ -1517,7 +1516,7 @@ def main() -> None:
             st.session_state.search_terms_filter = active_search_terms
             st.session_state.pop("search_terms_selector", None)
         st.rerun()
-    selected_search_terms = active_search_col.multiselect(
+    selected_search_terms = st.multiselect(
         "Filtros de busqueda",
         options=active_search_terms,
         default=active_search_terms,
@@ -1527,6 +1526,7 @@ def main() -> None:
     if selected_search_terms != active_search_terms:
         st.session_state.search_terms_filter = selected_search_terms
         active_search_terms = selected_search_terms
+    show_col, caption_col = st.columns([0.9, 3.4])
     show_all_tasks = show_col.checkbox("Mostrar todas las tareas", value=False, key="show_all_tasks_filter")
 
     filters_now = current_filter_state(program["id"])
@@ -1554,7 +1554,7 @@ def main() -> None:
     caption = f"{len(filtered)} tarea(s) visibles de {len(loaded_for_scope)} cargadas para empresa/sector."
     if hidden_count:
         caption += f" {hidden_count} completada(s) o a replanificar ocultas."
-    st.caption(caption)
+    caption_col.caption(caption)
     visible_task_ids = {task["id"] for task in filtered}
     filtered_base_task_ids = {task["id"] for task in filtered_base}
     filtered_advances = [advance for advance in advances if advance.get("task_id") in filtered_base_task_ids]
