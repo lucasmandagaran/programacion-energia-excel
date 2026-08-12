@@ -555,7 +555,10 @@ FILTER_KEYS = [
 def has_pending_work() -> bool:
     pending = st.session_state.get("pending_state_changes", {})
     comment = str(st.session_state.get("common_comment_text") or "").strip()
-    return bool(pending) or bool(comment)
+    selected = st.session_state.get("selected_task_ids", [])
+    editor_state = st.session_state.get("task_editor", {})
+    editor_has_changes = bool(editor_state.get("edited_rows")) if isinstance(editor_state, dict) else False
+    return bool(pending) or bool(comment) or bool(selected) or editor_has_changes
 
 
 def clear_pending_work() -> None:
@@ -634,6 +637,11 @@ def apply_navigation(action: str) -> None:
 
 
 def undo_last_change() -> None:
+    if st.session_state.get("confirm_refresh") or st.session_state.get("pending_navigation") or st.session_state.get("filter_change_guard"):
+        st.session_state.pop("confirm_refresh", None)
+        st.session_state.pop("pending_navigation", None)
+        st.session_state.pop("filter_change_guard", None)
+        st.rerun()
     if has_pending_work():
         clear_pending_work()
         st.rerun()
