@@ -646,10 +646,18 @@ FILTER_KEYS = [
 def has_pending_work() -> bool:
     pending = st.session_state.get("pending_state_changes", {})
     comment = str(st.session_state.get("common_comment_text") or "").strip()
-    selected = st.session_state.get("selected_task_ids", [])
     editor_state = st.session_state.get("task_editor", {})
-    editor_has_changes = bool(editor_state.get("edited_rows")) if isinstance(editor_state, dict) else False
-    return bool(pending) or bool(comment) or bool(selected) or editor_has_changes
+    editor_has_state_changes = False
+    if isinstance(editor_state, dict):
+        edited_rows = editor_state.get("edited_rows", {})
+        if isinstance(edited_rows, dict):
+            editor_has_state_changes = any(
+                isinstance(changes, dict) and "Estado" in changes
+                for changes in edited_rows.values()
+            )
+    # Seleccionar tareas (individualmente o con "Seleccionar tareas visibles") no es un cambio
+    # pendiente por si solo. Solo cuentan cambios reales de estado o un comentario escrito.
+    return bool(pending) or bool(comment) or editor_has_state_changes
 
 
 def clear_pending_work() -> None:
@@ -1691,10 +1699,22 @@ def render_records_section(
                 "de estado y/o el ultimo comentario independiente de cada tarea segun la opcion elegida."
             )
             if display_log_rows:
+                select_all_key = f"select_all_visible_advances{key_suffix}"
+                select_all_previous_key = f"_previous_{select_all_key}"
+                delete_editor_key = f"delete_advances_editor_{records_view}{key_suffix}"
                 select_all_visible = st.checkbox(
                     "Seleccionar todo visible",
-                    key=f"select_all_visible_advances{key_suffix}",
+                    key=select_all_key,
                 )
+                previous_select_all_visible = bool(
+                    st.session_state.get(select_all_previous_key, False)
+                )
+                if select_all_visible != previous_select_all_visible:
+                    # Reiniciar el estado del editor cuando cambia el selector masivo.
+                    # Así, al destildarlo, se quitan todos los tildes que agregó este botón.
+                    st.session_state.pop(delete_editor_key, None)
+                    st.session_state[select_all_previous_key] = select_all_visible
+
                 delete_df = pd.DataFrame([{**{"Eliminar": False}, **row} for row in display_log_rows])
                 if select_all_visible:
                     delete_df["Eliminar"] = True
@@ -1704,7 +1724,7 @@ def render_records_section(
                     use_container_width=False,
                     disabled=[column for column in delete_df.columns if column != "Eliminar"],
                     column_config=delete_records_column_config(state_column),
-                    key=f"delete_advances_editor_{records_view}{key_suffix}",
+                    key=delete_editor_key,
                 )
                 selected_delete_ids = (
                     edited_delete.loc[edited_delete["Eliminar"] == True, "_advance_id"].tolist()
@@ -2039,12 +2059,25 @@ def main() -> None:
             st.rerun()
 
     select_all_visible_tasks = bool(st.session_state.get("select_all_visible_tasks_filter", False))
-    if select_all_visible_tasks:
-        selected_task_state.update(visible_task_ids)
+    previous_select_all_visible_tasks = bool(
+        st.session_state.get("_select_all_visible_tasks_previous", False)
+    )
+    if select_all_visible_tasks != previous_select_all_visible_tasks:
+        if select_all_visible_tasks:
+            selected_task_state.update(visible_task_ids)
+        else:
+            # Al destildar el selector masivo, quitar el tilde de todas las tareas
+            # actualmente visibles que fueron alcanzadas por esa selección.
+            selected_task_state.difference_update(visible_task_ids)
         st.session_state.selected_task_ids = sorted(selected_task_state)
-        for index, row in df.iterrows():
-            if str(row["_task_id"]) in visible_task_ids:
-                df.at[index, "Seleccionar"] = True
+        st.session_state._select_all_visible_tasks_previous = select_all_visible_tasks
+        # El editor puede conservar cambios visuales de checkboxes entre reruns. Se limpia
+        # su estado; los cambios reales de Estado ya están preservados en pending_state_changes.
+        st.session_state.pop("task_editor", None)
+
+    for index, row in df.iterrows():
+        task_id = str(row["_task_id"])
+        df.at[index, "Seleccionar"] = task_id in selected_task_state
 
     save_col, comment_col, pending_col, select_all_col, show_col = st.columns([0.9, 0.95, 1.45, 1.25, 1.2])
     if save_col.button("Guardar avances", type="primary", disabled=not pending_all_ids):
