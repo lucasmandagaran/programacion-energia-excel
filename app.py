@@ -62,6 +62,7 @@ STATE_ROW_STYLES = {
     "COMENTARIO": "background-color: rgba(137, 87, 229, 0.22); color: #f6efff; font-weight: 700;",
     "SIN AVANCE": "background-color: rgba(139, 148, 158, 0.14); color: #f0f3f6;",
 }
+COMMENT_DISPLAY_LIMIT = 95
 REASONS = [
     "",
     "Pedido Sup PAE",
@@ -1096,6 +1097,55 @@ def record_status_style(row: pd.Series) -> list[str]:
     return [STATE_ROW_STYLES.get(status, "") for _ in row]
 
 
+def task_table_column_config() -> dict[str, Any]:
+    return {
+        "Seleccionar": st.column_config.CheckboxColumn("Sel.", width="small"),
+        "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True, width="small"),
+        "Titulo tarea": st.column_config.TextColumn("Titulo tarea", width="large"),
+        "Fecha inicio": st.column_config.TextColumn("Fecha inicio", width="small"),
+        "Duracion": st.column_config.TextColumn("Duracion", width="small"),
+        "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width="small"),
+        "OT": st.column_config.TextColumn("OT", width="small"),
+        "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width="medium"),
+        "KKS/TAG": st.column_config.TextColumn("KKS/TAG", width="small"),
+    }
+
+
+def records_table_column_config(state_column: str = "Estado") -> dict[str, Any]:
+    return {
+        "Titulo tarea": st.column_config.TextColumn("Titulo tarea", width="large"),
+        "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width="small"),
+        "OT": st.column_config.TextColumn("OT", width="small"),
+        "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width="medium"),
+        "KKS/TAG": st.column_config.TextColumn("KKS/TAG", width="small"),
+        state_column: st.column_config.TextColumn(state_column, width="small"),
+        "Comentario": st.column_config.TextColumn("Comentario", width="medium"),
+        "Fecha modificacion": st.column_config.TextColumn("Fecha modificacion", width="small"),
+        "Hora modificacion": st.column_config.TextColumn("Hora modificacion", width="small"),
+        "Informado por": st.column_config.TextColumn("Informado por", width="medium"),
+        "Empresa": st.column_config.TextColumn("Empresa", width="medium"),
+        "Sector": st.column_config.TextColumn("Sector", width="medium"),
+    }
+
+
+def delete_records_column_config(state_column: str = "Estado") -> dict[str, Any]:
+    config = records_table_column_config(state_column)
+    config.update(
+        {
+            "_advance_id": None,
+            "Eliminar": st.column_config.CheckboxColumn("Eliminar", width="small"),
+        }
+    )
+    return config
+
+
+def truncate_display_text(value: Any, limit: int = COMMENT_DISPLAY_LIMIT) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 3, 0)].rstrip() + "..."
+
+
 def hide_task_after_saved(task: dict[str, Any], latest: dict[str, dict[str, Any]]) -> bool:
     advance = latest.get(task["id"], {})
     return str(advance.get("action") or "").strip().upper() in HIDE_AFTER_SAVE_ACTIONS
@@ -1745,10 +1795,7 @@ def main() -> None:
         hide_index=True,
         use_container_width=True,
         disabled=[column for column in visible_df.columns if column not in {"Seleccionar", "Estado"}],
-        column_config={
-            "Seleccionar": st.column_config.CheckboxColumn("Sel."),
-            "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True),
-        },
+        column_config=task_table_column_config(),
         key="task_editor",
     )
     if not edited.empty:
@@ -1812,10 +1859,18 @@ def main() -> None:
         state_column,
     )
     log = pd.DataFrame([{key: value for key, value in row.items() if key != "_advance_id"} for row in display_log_rows])
-    if log.empty:
-        st.dataframe(log, hide_index=True, use_container_width=True)
+    display_log = log.copy()
+    if "Comentario" in display_log.columns:
+        display_log["Comentario"] = display_log["Comentario"].map(truncate_display_text)
+    if display_log.empty:
+        st.dataframe(display_log, hide_index=True, use_container_width=True, column_config=records_table_column_config(state_column))
     else:
-        st.dataframe(log.style.apply(record_status_style, axis=1), hide_index=True, use_container_width=True)
+        st.dataframe(
+            display_log.style.apply(record_status_style, axis=1),
+            hide_index=True,
+            use_container_width=True,
+            column_config=records_table_column_config(state_column),
+        )
 
     if st.session_state.role == "admin" and advances:
         with st.expander("Administracion de registros", expanded=False):
@@ -1826,10 +1881,7 @@ def main() -> None:
                     hide_index=True,
                     use_container_width=True,
                     disabled=[column for column in delete_df.columns if column != "Eliminar"],
-                    column_config={
-                        "_advance_id": None,
-                        "Eliminar": st.column_config.CheckboxColumn("Eliminar"),
-                    },
+                    column_config=delete_records_column_config(state_column),
                     key=f"delete_advances_editor_{records_view}",
                 )
                 selected_delete_ids = (
