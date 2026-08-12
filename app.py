@@ -2038,7 +2038,15 @@ def main() -> None:
             st.session_state.pop("pending_navigation", None)
             st.rerun()
 
-    save_col, comment_col, pending_col, show_col = st.columns([0.9, 0.95, 2.3, 1.2])
+    select_all_visible_tasks = bool(st.session_state.get("select_all_visible_tasks_filter", False))
+    if select_all_visible_tasks:
+        selected_task_state.update(visible_task_ids)
+        st.session_state.selected_task_ids = sorted(selected_task_state)
+        for index, row in df.iterrows():
+            if str(row["_task_id"]) in visible_task_ids:
+                df.at[index, "Seleccionar"] = True
+
+    save_col, comment_col, pending_col, select_all_col, show_col = st.columns([0.9, 0.95, 1.45, 1.25, 1.2])
     if save_col.button("Guardar avances", type="primary", disabled=not pending_all_ids):
         if save_current_pending_work():
             st.success(f"{len(pending_visible_ids)} avance(s) guardado(s).")
@@ -2052,6 +2060,11 @@ def main() -> None:
         st.rerun()
     if pending_all_ids:
         pending_col.caption(f"{len(pending_all_ids)} avance(s) pendiente(s) de guardar.")
+    select_all_col.checkbox(
+        "Seleccionar tareas visibles",
+        value=select_all_visible_tasks,
+        key="select_all_visible_tasks_filter",
+    )
     show_col.checkbox("Mostrar todas las tareas", value=show_all_tasks, key="show_all_tasks_filter")
     st.caption(caption)
 
