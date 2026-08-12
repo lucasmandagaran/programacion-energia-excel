@@ -1507,7 +1507,7 @@ def main() -> None:
         {effective_sector(task) for task in scoped_tasks if effective_sector(task)},
         key=lambda item: normalize(item),
     )
-    f1, f2, f3, f4, f5 = st.columns([1.05, 1.4, 0.72, 0.72, 1.45])
+    f1, f2, f3, f4, f5 = st.columns([0.95, 1.25, 0.62, 0.62, 1.95])
     inner_sector = f1.selectbox(
         "Sector",
         inner_sector_options,
@@ -1522,8 +1522,9 @@ def main() -> None:
     start = f3.date_input("Fecha inicio", value=None, format="DD/MM/YYYY", key="start_filter")
     end = f4.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
     active_search_terms = st.session_state.setdefault("search_terms_filter", [])
-    f5.selectbox("Buscar por", list(SEARCH_FIELD_OPTIONS.keys()), key="search_field_input")
-    f5.text_input(
+    search_field_col, search_value_col = f5.columns([0.9, 1.25])
+    search_field_col.selectbox("Buscar por", list(SEARCH_FIELD_OPTIONS.keys()), key="search_field_input")
+    search_value_col.text_input(
         "Buscar",
         placeholder="Escribir y presionar Enter",
         key="search_value_input",
