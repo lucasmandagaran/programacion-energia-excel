@@ -475,9 +475,11 @@ def delete_advances(advance_ids: list[str]) -> None:
 
 def login_screen() -> None:
     app_header("Trabajos programados")
-    mode = st.radio("Modo de ingreso", ["Cuadrilla / contratista", "Administrador"], horizontal=True)
-    password = st.text_input("Contrasena", type="password")
-    if st.button("Ingresar", type="primary"):
+    with st.form("login_form"):
+        mode = st.radio("Modo de ingreso", ["Cuadrilla / contratista", "Administrador"], horizontal=True)
+        password = st.text_input("Contraseña", type="password")
+        submitted = st.form_submit_button("Ingresar", type="primary")
+    if submitted:
         if mode.startswith("Administrador"):
             if password == ADMIN_PASSWORD:
                 st.session_state.role = "admin"
@@ -487,7 +489,7 @@ def login_screen() -> None:
             if password == ACCESS_PASSWORD:
                 st.session_state.role = "user"
                 st.rerun()
-            st.error("Contrasena incorrecta.")
+            st.error("Contraseña incorrecta.")
     st.stop()
 
 
