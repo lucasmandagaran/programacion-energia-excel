@@ -519,6 +519,46 @@ def delete_candidates_preserving_latest_status(
     return delete_ids, keep_ids
 
 
+def delete_candidates_preserving_latest_records(
+    advances: list[dict[str, Any]],
+    candidate_ids: list[str],
+    delete_status: bool,
+    delete_comments: bool,
+) -> tuple[list[str], set[str]]:
+    candidate_set = {str(item) for item in candidate_ids if item}
+    keep_ids: set[str] = set()
+    seen_status_tasks: set[str] = set()
+    seen_comment_tasks: set[str] = set()
+    for advance in sorted(advances, key=lambda item: item.get("created_at", ""), reverse=True):
+        task_id = str(advance.get("task_id") or "")
+        advance_id = str(advance.get("id") or "")
+        if not task_id or not advance_id:
+            continue
+        if is_status_advance(advance):
+            if task_id in seen_status_tasks:
+                continue
+            seen_status_tasks.add(task_id)
+            if advance_id in candidate_set and delete_status:
+                keep_ids.add(advance_id)
+        else:
+            if task_id in seen_comment_tasks:
+                continue
+            seen_comment_tasks.add(task_id)
+            if advance_id in candidate_set and delete_comments:
+                keep_ids.add(advance_id)
+
+    delete_ids: list[str] = []
+    for advance in advances:
+        advance_id = str(advance.get("id") or "")
+        if advance_id not in candidate_set or advance_id in keep_ids:
+            continue
+        if is_status_advance(advance) and delete_status:
+            delete_ids.append(advance_id)
+        elif not is_status_advance(advance) and delete_comments:
+            delete_ids.append(advance_id)
+    return delete_ids, keep_ids
+
+
 def login_screen() -> None:
     app_header("Trabajos programados")
     with st.form("login_form"):
@@ -1647,12 +1687,17 @@ def render_records_section(
     if st.session_state.role == "admin" and advances:
         with st.expander("Administracion de registros", expanded=False):
             st.caption(
-                "La limpieza mantiene el ultimo cambio de estado de cada tarea como registro completo, "
-                "incluyendo motivo y comentario si fueron cargados en ese avance. Los comentarios sueltos "
-                "se eliminan si estan dentro de los registros seleccionados o visibles."
+                "La limpieza trabaja sobre los registros seleccionados. Puede conservar el ultimo cambio "
+                "de estado y/o el ultimo comentario independiente de cada tarea segun la opcion elegida."
             )
             if display_log_rows:
+                select_all_visible = st.checkbox(
+                    "Seleccionar todo visible",
+                    key=f"select_all_visible_advances{key_suffix}",
+                )
                 delete_df = pd.DataFrame([{**{"Eliminar": False}, **row} for row in display_log_rows])
+                if select_all_visible:
+                    delete_df["Eliminar"] = True
                 edited_delete = st.data_editor(
                     delete_df,
                     hide_index=True,
@@ -1669,33 +1714,53 @@ def render_records_section(
             else:
                 st.info("No hay registros visibles con los filtros actuales.")
                 selected_delete_ids = []
+
+            def run_selected_cleanup(label: str, delete_status: bool, delete_comments: bool) -> None:
+                delete_ids, keep_ids = delete_candidates_preserving_latest_records(
+                    advances,
+                    selected_delete_ids,
+                    delete_status=delete_status,
+                    delete_comments=delete_comments,
+                )
+                delete_advances(delete_ids)
+                st.session_state.pop(f"delete_advances_editor_{records_view}{key_suffix}", None)
+                st.session_state.pop(f"select_all_visible_advances{key_suffix}", None)
+                if delete_ids:
+                    st.success(
+                        f"{label}: {len(delete_ids)} registro(s) eliminado(s). "
+                        f"Se conservaron {len(keep_ids)} ultimo(s) registro(s) protegido(s)."
+                    )
+                else:
+                    st.info(f"{label}: no habia registros antiguos para eliminar con esta seleccion.")
+                st.rerun()
+
             d1, d2, d3 = st.columns(3)
-            if d1.button("Limpiar seleccionados manteniendo estado", disabled=not selected_delete_ids, key=f"clean_selected{key_suffix}"):
-                delete_ids, keep_ids = delete_candidates_preserving_latest_status(advances, selected_delete_ids)
-                delete_advances(delete_ids)
-                st.session_state.pop(f"delete_advances_editor_{records_view}{key_suffix}", None)
-                st.success(
-                    f"{len(delete_ids)} registro(s) eliminado(s). "
-                    f"Se conservaron {len(keep_ids)} ultimo(s) cambio(s) de estado con su comentario asociado."
-                )
-                st.rerun()
-            visible_cleanup_ids = [advance["id"] for advance in filtered_advances if advance.get("id")]
-            if d2.button("Limpiar visibles manteniendo estado", disabled=not visible_cleanup_ids, key=f"clean_visible{key_suffix}"):
-                delete_ids, keep_ids = delete_candidates_preserving_latest_status(advances, visible_cleanup_ids)
-                delete_advances(delete_ids)
-                st.session_state.pop(f"delete_advances_editor_{records_view}{key_suffix}", None)
-                st.success(
-                    f"{len(delete_ids)} registro(s) visible(s) eliminado(s). "
-                    f"Se conservaron {len(keep_ids)} ultimo(s) cambio(s) de estado con su comentario asociado."
-                )
-                st.rerun()
+            if d1.button(
+                "Borrar estados y comentarios antiguos",
+                disabled=not selected_delete_ids,
+                key=f"clean_status_comments{key_suffix}",
+            ):
+                run_selected_cleanup("Estados y comentarios", delete_status=True, delete_comments=True)
+            if d2.button(
+                "Borrar cambios de estado antiguos",
+                disabled=not selected_delete_ids,
+                key=f"clean_status_only{key_suffix}",
+            ):
+                run_selected_cleanup("Cambios de estado", delete_status=True, delete_comments=False)
+            if d3.button(
+                "Borrar comentarios antiguos",
+                disabled=not selected_delete_ids,
+                key=f"clean_comments_only{key_suffix}",
+            ):
+                run_selected_cleanup("Comentarios", delete_status=False, delete_comments=True)
             confirm_all = st.checkbox(
                 "Confirmo resetear avances del programa activo al estado original del Excel",
                 key=f"confirm_reset_advances{key_suffix}",
             )
-            if d3.button("Resetear al Excel original", disabled=not confirm_all, key=f"reset_advances{key_suffix}"):
+            if st.button("Resetear al Excel original", disabled=not confirm_all, key=f"reset_advances{key_suffix}"):
                 delete_advances([advance["id"] for advance in advances])
                 st.session_state.pop(f"delete_advances_editor_{records_view}{key_suffix}", None)
+                st.session_state.pop(f"select_all_visible_advances{key_suffix}", None)
                 st.success("Registros del programa eliminados.")
                 st.rerun()
 
