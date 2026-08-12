@@ -47,6 +47,13 @@ DISTRIBUTION_SECTORS = {
 STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE"]
 REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
 HIDE_AFTER_SAVE_ACTIONS = {"COMPLETADO", "REPLANIFICAR"}
+SEARCH_FIELD_OPTIONS = {
+    "Titulo tarea": ["tarea"],
+    "OT": ["nro_ot"],
+    "Ubicacion tecnica": ["ubicacion_tecnica"],
+    "KKS/TAG": ["kks_tag"],
+    "Cuadrilla": ["cuadrilla"],
+}
 STATE_ROW_STYLES = {
     "COMPLETADO": "background-color: rgba(36, 161, 72, 0.30); color: #f2fff5; font-weight: 700;",
     "EN CURSO": "background-color: rgba(31, 111, 235, 0.28); color: #f2f7ff; font-weight: 700;",
@@ -539,7 +546,7 @@ FILTER_KEYS = [
     "crew_filter",
     "start_filter",
     "end_filter",
-    "text_filter",
+    "search_terms_filter",
     "show_all_tasks_filter",
 ]
 
@@ -568,7 +575,7 @@ def current_filter_state(program_id: str) -> dict[str, Any]:
         "crew_filter": st.session_state.get("crew_filter", ""),
         "start_filter": st.session_state.get("start_filter"),
         "end_filter": st.session_state.get("end_filter"),
-        "text_filter": st.session_state.get("text_filter", ""),
+        "search_terms_filter": tuple(st.session_state.get("search_terms_filter", [])),
         "show_all_tasks_filter": bool(st.session_state.get("show_all_tasks_filter", False)),
     }
 
@@ -578,7 +585,11 @@ def restore_filter_state(state: dict[str, Any] | None) -> None:
         return
     for key in FILTER_KEYS:
         if key in state:
-            st.session_state[key] = state[key]
+            value = state[key]
+            if key == "search_terms_filter" and isinstance(value, tuple):
+                value = list(value)
+                st.session_state.pop("search_terms_selector", None)
+            st.session_state[key] = value
 
 
 def request_navigation(action: str) -> None:
@@ -910,6 +921,50 @@ def selected_crews(value: Any) -> set[str]:
     return {normalize_crew(value)}
 
 
+def search_terms(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        raw_terms = [str(item or "").strip() for item in value]
+    else:
+        raw_terms = [str(value or "").strip()]
+    terms = []
+    seen = set()
+    for item in raw_terms:
+        normalized = normalize(item)
+        if normalized and normalized not in seen:
+            terms.append(normalized)
+            seen.add(normalized)
+    return terms
+
+
+def make_search_filter_label(field: str, value: str) -> str:
+    return f"{field}: {value.strip()}"
+
+
+def parse_search_filter_label(label: Any) -> tuple[str, str]:
+    text = str(label or "").strip()
+    if ":" not in text:
+        return "Todos los campos", text
+    field, value = text.split(":", 1)
+    field = field.strip()
+    value = value.strip()
+    if field not in SEARCH_FIELD_OPTIONS:
+        return "Todos los campos", value or text
+    return field, value
+
+
+def task_search_text(task: dict[str, Any], field: str) -> str:
+    if field in SEARCH_FIELD_OPTIONS:
+        keys = SEARCH_FIELD_OPTIONS[field]
+    else:
+        keys = ["nro_ot", "tarea", "cuadrilla", "ubicacion_tecnica", "kks_tag"]
+    text = " ".join(str(task.get(key) or "") for key in keys)
+    if field in {"Todos los campos", "Titulo tarea"}:
+        text = f"{text} {task_title(task)}"
+    return normalize(text)
+
+
 def apply_filters(
     tasks: list[dict[str, Any]],
     company: str,
@@ -917,7 +972,7 @@ def apply_filters(
     crew: Any,
     start: Any,
     end: Any,
-    text: str,
+    text: Any,
 ) -> list[dict[str, Any]]:
     output = []
     company = scope_value(company)
@@ -929,7 +984,10 @@ def apply_filters(
         end_iso = start_iso
     elif end_iso and not start_iso:
         start_iso = end_iso
-    text_norm = normalize(text)
+    search_filters = [parse_search_filter_label(item) for item in (text or [])] if isinstance(text, (list, tuple, set)) else []
+    if not search_filters and text:
+        search_filters = [("Todos los campos", str(text))]
+    search_filters = [(field, value) for field, value in search_filters if normalize(value)]
     for task in tasks:
         if company:
             if normalize(company) == "otra":
@@ -956,10 +1014,15 @@ def apply_filters(
                 continue
             if task_start > end_iso or task_end < start_iso:
                 continue
-        haystack = normalize(" ".join(str(task.get(key) or "") for key in ["nro_ot", "tarea", "cuadrilla", "ubicacion_tecnica", "kks_tag"]))
-        haystack = normalize(f"{haystack} {task_title(task)}")
-        if text_norm and text_norm not in haystack:
-            continue
+        if search_filters:
+            filters_by_field: dict[str, list[str]] = {}
+            for field, value in search_filters:
+                filters_by_field.setdefault(field, []).append(value)
+            if not all(
+                any(normalize(value) in task_search_text(task, field) for value in values)
+                for field, values in filters_by_field.items()
+            ):
+                continue
         output.append(task)
     return output
 
@@ -1413,7 +1476,8 @@ def main() -> None:
         st.info(f"No hay programas activos para {area}. Ingresar como administrador y cargar un Excel.")
         return
 
-    program = st.selectbox("Programa", programs, format_func=lambda item: item["name"], key="program_filter")
+    program_col, _program_spacer = st.columns([2.1, 2.9])
+    program = program_col.selectbox("Programa", programs, format_func=lambda item: item["name"], key="program_filter")
     tasks = load_tasks(program["id"])
     advances = load_advances(program["id"])
     latest = latest_status_by_task(advances)
@@ -1425,7 +1489,7 @@ def main() -> None:
         {effective_sector(task) for task in scoped_tasks if effective_sector(task)},
         key=lambda item: normalize(item),
     )
-    f1, f2, f3, f4 = st.columns([1.25, 1.8, 0.9, 0.9])
+    f1, f2, f3, f4 = st.columns([1.15, 1.65, 0.75, 0.75])
     inner_sector = f1.selectbox(
         "Sector",
         inner_sector_options,
@@ -1439,8 +1503,30 @@ def main() -> None:
     crew = f2.multiselect("Cuadrilla", crew_options, placeholder="Todas", key="crew_filter")
     start = f3.date_input("Fecha inicio", value=None, format="DD/MM/YYYY", key="start_filter")
     end = f4.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
-    search_col, show_col = st.columns([3, 1])
-    text = search_col.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG", key="text_filter")
+    search_input_col, active_search_col, show_col = st.columns([1.75, 2.15, 0.95])
+    active_search_terms = st.session_state.setdefault("search_terms_filter", [])
+    with search_input_col.form("search_filter_form", clear_on_submit=True):
+        search_field = st.selectbox("Buscar por", list(SEARCH_FIELD_OPTIONS.keys()))
+        search_value = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG")
+        add_search = st.form_submit_button("Agregar filtro", use_container_width=True)
+    if add_search:
+        new_term = str(search_value or "").strip()
+        new_label = make_search_filter_label(search_field, new_term)
+        if new_term and normalize(new_label) not in {normalize(item) for item in active_search_terms}:
+            active_search_terms.append(new_label)
+            st.session_state.search_terms_filter = active_search_terms
+            st.session_state.pop("search_terms_selector", None)
+        st.rerun()
+    selected_search_terms = active_search_col.multiselect(
+        "Filtros de busqueda",
+        options=active_search_terms,
+        default=active_search_terms,
+        placeholder="Sin filtros",
+        key="search_terms_selector",
+    )
+    if selected_search_terms != active_search_terms:
+        st.session_state.search_terms_filter = selected_search_terms
+        active_search_terms = selected_search_terms
     show_all_tasks = show_col.checkbox("Mostrar todas las tareas", value=False, key="show_all_tasks_filter")
 
     filters_now = current_filter_state(program["id"])
@@ -1458,7 +1544,7 @@ def main() -> None:
             st.session_state.last_filter_state = filters_now
 
     base_sector = inner_sector or sector
-    filtered_base = apply_filters(tasks, company, base_sector, crew, start, end, text)
+    filtered_base = apply_filters(tasks, company, base_sector, crew, start, end, active_search_terms)
     loaded_for_scope = apply_filters(tasks, company, base_sector, "", None, None, "")
     if show_all_tasks:
         filtered = filtered_base
