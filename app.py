@@ -588,8 +588,26 @@ def restore_filter_state(state: dict[str, Any] | None) -> None:
             value = state[key]
             if key == "search_terms_filter" and isinstance(value, tuple):
                 value = list(value)
-                st.session_state.pop("search_terms_selector", None)
             st.session_state[key] = value
+
+
+def add_search_filter_from_state() -> None:
+    field = str(st.session_state.get("search_field_input") or "Titulo tarea")
+    value = str(st.session_state.get("search_value_input") or "").strip()
+    if not value:
+        return
+    label = make_search_filter_label(field, value)
+    active = list(st.session_state.get("search_terms_filter", []))
+    if normalize(label) not in {normalize(item) for item in active}:
+        active.append(label)
+    st.session_state.search_terms_filter = active
+    st.session_state.search_value_input = ""
+
+
+def remove_search_filter(label: str) -> None:
+    st.session_state.search_terms_filter = [
+        item for item in st.session_state.get("search_terms_filter", []) if item != label
+    ]
 
 
 def request_navigation(action: str) -> None:
@@ -1504,28 +1522,20 @@ def main() -> None:
     start = f3.date_input("Fecha inicio", value=None, format="DD/MM/YYYY", key="start_filter")
     end = f4.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
     active_search_terms = st.session_state.setdefault("search_terms_filter", [])
-    with f5.form("search_filter_form", clear_on_submit=True):
-        search_field = st.selectbox("Buscar por", list(SEARCH_FIELD_OPTIONS.keys()))
-        search_value = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG")
-        add_search = st.form_submit_button("Agregar filtro", use_container_width=True)
-    if add_search:
-        new_term = str(search_value or "").strip()
-        new_label = make_search_filter_label(search_field, new_term)
-        if new_term and normalize(new_label) not in {normalize(item) for item in active_search_terms}:
-            active_search_terms.append(new_label)
-            st.session_state.search_terms_filter = active_search_terms
-            st.session_state.pop("search_terms_selector", None)
-        st.rerun()
-    selected_search_terms = st.multiselect(
-        "Filtros de busqueda",
-        options=active_search_terms,
-        default=active_search_terms,
-        placeholder="Sin filtros",
-        key="search_terms_selector",
+    f5.selectbox("Buscar por", list(SEARCH_FIELD_OPTIONS.keys()), key="search_field_input")
+    f5.text_input(
+        "Buscar",
+        placeholder="Escribir y presionar Enter",
+        key="search_value_input",
+        on_change=add_search_filter_from_state,
     )
-    if selected_search_terms != active_search_terms:
-        st.session_state.search_terms_filter = selected_search_terms
-        active_search_terms = selected_search_terms
+    active_search_terms = st.session_state.get("search_terms_filter", [])
+    if active_search_terms:
+        tag_cols = st.columns(4)
+        for index, label in enumerate(active_search_terms):
+            if tag_cols[index % 4].button(f"x {label}", key=f"remove_search_filter_{index}_{normalize(label)}"):
+                remove_search_filter(label)
+                st.rerun()
     show_col, caption_col = st.columns([0.9, 3.4])
     show_all_tasks = show_col.checkbox("Mostrar todas las tareas", value=False, key="show_all_tasks_filter")
 
