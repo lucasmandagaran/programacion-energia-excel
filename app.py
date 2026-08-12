@@ -1099,32 +1099,32 @@ def record_status_style(row: pd.Series) -> list[str]:
 
 def task_table_column_config() -> dict[str, Any]:
     return {
-        "Seleccionar": st.column_config.CheckboxColumn("Sel.", width="small"),
-        "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True, width="small"),
-        "Titulo tarea": st.column_config.TextColumn("Titulo tarea", width="large"),
-        "Fecha inicio": st.column_config.TextColumn("Fecha inicio", width="small"),
-        "Duracion": st.column_config.TextColumn("Duracion", width="small"),
-        "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width="small"),
-        "OT": st.column_config.TextColumn("OT", width="small"),
-        "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width="medium"),
-        "KKS/TAG": st.column_config.TextColumn("KKS/TAG", width="small"),
+        "Seleccionar": st.column_config.CheckboxColumn("Sel.", width=56),
+        "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True, width=108),
+        "Titulo tarea": st.column_config.TextColumn("Titulo tarea", width=390),
+        "Fecha inicio": st.column_config.TextColumn("Fecha inicio", width=104),
+        "Duracion": st.column_config.TextColumn("Duracion", width=82),
+        "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width=82),
+        "OT": st.column_config.TextColumn("OT", width=92),
+        "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width=290),
+        "KKS/TAG": st.column_config.TextColumn("KKS/TAG", width=110),
     }
 
 
 def records_table_column_config(state_column: str = "Estado") -> dict[str, Any]:
     return {
-        "Titulo tarea": st.column_config.TextColumn("Titulo tarea", width="large"),
-        "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width="small"),
-        "OT": st.column_config.TextColumn("OT", width="small"),
-        "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width="medium"),
-        "KKS/TAG": st.column_config.TextColumn("KKS/TAG", width="small"),
-        state_column: st.column_config.TextColumn(state_column, width="small"),
-        "Comentario": st.column_config.TextColumn("Comentario", width="medium"),
-        "Fecha modificacion": st.column_config.TextColumn("Fecha modificacion", width="small"),
-        "Hora modificacion": st.column_config.TextColumn("Hora modificacion", width="small"),
-        "Informado por": st.column_config.TextColumn("Informado por", width="medium"),
-        "Empresa": st.column_config.TextColumn("Empresa", width="medium"),
-        "Sector": st.column_config.TextColumn("Sector", width="medium"),
+        "Titulo tarea": st.column_config.TextColumn("Titulo tarea", width=330),
+        "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width=92),
+        "OT": st.column_config.TextColumn("OT", width=92),
+        "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width=230),
+        "KKS/TAG": st.column_config.TextColumn("KKS/TAG", width=105),
+        state_column: st.column_config.TextColumn(state_column, width=116),
+        "Comentario": st.column_config.TextColumn("Comentario", width=250),
+        "Fecha modificacion": st.column_config.TextColumn("Fecha modificacion", width=118),
+        "Hora modificacion": st.column_config.TextColumn("Hora modificacion", width=104),
+        "Informado por": st.column_config.TextColumn("Informado por", width=150),
+        "Empresa": st.column_config.TextColumn("Empresa", width=150),
+        "Sector": st.column_config.TextColumn("Sector", width=160),
     }
 
 
@@ -1133,7 +1133,7 @@ def delete_records_column_config(state_column: str = "Estado") -> dict[str, Any]
     config.update(
         {
             "_advance_id": None,
-            "Eliminar": st.column_config.CheckboxColumn("Eliminar", width="small"),
+            "Eliminar": st.column_config.CheckboxColumn("Eliminar", width=76),
         }
     )
     return config
@@ -1793,7 +1793,7 @@ def main() -> None:
     edited = st.data_editor(
         visible_df.style.apply(task_status_style, axis=1),
         hide_index=True,
-        use_container_width=True,
+        use_container_width=False,
         disabled=[column for column in visible_df.columns if column not in {"Seleccionar", "Estado"}],
         column_config=task_table_column_config(),
         key="task_editor",
@@ -1863,12 +1863,12 @@ def main() -> None:
     if "Comentario" in display_log.columns:
         display_log["Comentario"] = display_log["Comentario"].map(truncate_display_text)
     if display_log.empty:
-        st.dataframe(display_log, hide_index=True, use_container_width=True, column_config=records_table_column_config(state_column))
+        st.dataframe(display_log, hide_index=True, use_container_width=False, column_config=records_table_column_config(state_column))
     else:
         st.dataframe(
             display_log.style.apply(record_status_style, axis=1),
             hide_index=True,
-            use_container_width=True,
+            use_container_width=False,
             column_config=records_table_column_config(state_column),
         )
 
@@ -1879,7 +1879,7 @@ def main() -> None:
                 edited_delete = st.data_editor(
                     delete_df,
                     hide_index=True,
-                    use_container_width=True,
+                    use_container_width=False,
                     disabled=[column for column in delete_df.columns if column != "Eliminar"],
                     column_config=delete_records_column_config(state_column),
                     key=f"delete_advances_editor_{records_view}",
