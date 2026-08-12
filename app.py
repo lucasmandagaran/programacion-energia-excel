@@ -664,10 +664,14 @@ def has_pending_work() -> bool:
 
 
 def clear_task_selection() -> None:
-    """Limpia toda la seleccion de tareas y destilda el check maestro."""
+    """Limpia toda la seleccion de tareas y destilda el check maestro.
+
+    El check maestro se fuerza a False por asignacion explicita (no pop):
+    en Streamlit, hacer pop de la key de un widget NO destilda el checkbox
+    porque conserva su estado interno; asignarle False si lo destilda."""
     st.session_state.pop("selected_task_ids", None)
-    st.session_state.pop("select_all_visible_tasks_filter", None)
-    st.session_state.pop("select_all_visible_tasks_prev", None)
+    st.session_state["select_all_visible_tasks_filter"] = False
+    st.session_state["select_all_visible_tasks_prev"] = False
     st.session_state.pop("task_editor", None)
 
 
@@ -675,8 +679,8 @@ def clear_pending_work() -> None:
     st.session_state.pop("pending_state_changes", None)
     st.session_state.pop("pending_program_id", None)
     st.session_state.pop("selected_task_ids", None)
-    st.session_state.pop("select_all_visible_tasks_filter", None)
-    st.session_state.pop("select_all_visible_tasks_prev", None)
+    st.session_state["select_all_visible_tasks_filter"] = False
+    st.session_state["select_all_visible_tasks_prev"] = False
     st.session_state.pop("task_editor", None)
     st.session_state.clear_comment_text_next = True
     st.session_state.pop("confirm_refresh", None)
@@ -2109,7 +2113,6 @@ def main() -> None:
         pending_col.caption(f"{len(pending_all_ids)} avance(s) pendiente(s) de guardar.")
     select_all_col.checkbox(
         "Seleccionar tareas visibles",
-        value=select_all_visible_tasks,
         key="select_all_visible_tasks_filter",
     )
     show_col.checkbox("Mostrar todas las tareas", value=show_all_tasks, key="show_all_tasks_filter")
