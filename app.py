@@ -136,6 +136,9 @@ def hide_streamlit_chrome() -> None:
     st.markdown(
         """
         <style>
+        :root {
+            --pe-gap: 0.45rem;
+        }
         #MainMenu,
         footer,
         [data-testid="stToolbar"],
@@ -165,6 +168,77 @@ def hide_streamlit_chrome() -> None:
             min-height: 0 !important;
             background: transparent !important;
         }
+        .block-container {
+            padding-top: 1.05rem !important;
+            padding-bottom: 1rem !important;
+            max-width: 100% !important;
+        }
+        h1 {
+            font-size: clamp(1.75rem, 3.4vw, 2.55rem) !important;
+            line-height: 1.05 !important;
+            margin-bottom: 0.2rem !important;
+        }
+        h2, h3 {
+            margin-top: 0.45rem !important;
+            margin-bottom: 0.35rem !important;
+        }
+        [data-testid="stVerticalBlock"] {
+            gap: var(--pe-gap) !important;
+        }
+        [data-testid="stHorizontalBlock"] {
+            gap: 0.55rem !important;
+        }
+        [data-testid="stExpander"] {
+            margin-bottom: 0.35rem !important;
+        }
+        [data-testid="stDataFrame"] {
+            margin-top: 0.15rem !important;
+        }
+        [data-testid="stDataFrame"] div[role="row"]:hover,
+        [data-testid="stDataFrame"] div[role="gridcell"]:hover {
+            filter: brightness(1.05) !important;
+        }
+        .stButton > button,
+        .stDownloadButton > button {
+            min-height: 2.25rem !important;
+            padding-top: 0.35rem !important;
+            padding-bottom: 0.35rem !important;
+        }
+        .stTextInput input,
+        .stSelectbox div[data-baseweb="select"],
+        .stMultiSelect div[data-baseweb="select"],
+        .stDateInput input {
+            min-height: 2.25rem !important;
+        }
+        .pe-header {
+            margin: 0 0 0.25rem 0;
+        }
+        .pe-header h1 {
+            margin: 0 !important;
+        }
+        .pe-subtitle {
+            margin: 0.05rem 0 0.35rem 0;
+            color: rgba(250, 250, 250, 0.68);
+            font-size: 0.88rem;
+        }
+        @media (max-width: 760px) {
+            .block-container {
+                padding-left: 0.55rem !important;
+                padding-right: 0.55rem !important;
+                padding-top: 0.55rem !important;
+            }
+            h1 {
+                font-size: 1.65rem !important;
+            }
+            .stCaptionContainer,
+            [data-testid="stCaptionContainer"] {
+                font-size: 0.78rem !important;
+            }
+            [data-testid="column"] {
+                width: 100% !important;
+                flex: 1 1 100% !important;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -172,6 +246,19 @@ def hide_streamlit_chrome() -> None:
 
 
 hide_streamlit_chrome()
+
+
+def app_header(subtitle: str = "") -> None:
+    subtitle_html = f'<div class="pe-subtitle">{subtitle}</div>' if subtitle else ""
+    st.markdown(
+        f"""
+        <div class="pe-header">
+            <h1>{APP_TITLE}</h1>
+            {subtitle_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def normalize(value: Any) -> str:
@@ -387,8 +474,7 @@ def delete_advances(advance_ids: list[str]) -> None:
 
 
 def login_screen() -> None:
-    st.title(APP_TITLE)
-    st.subheader("Trabajos programados")
+    app_header("Trabajos programados")
     mode = st.radio("Modo de ingreso", ["Cuadrilla / contratista", "Administrador"], horizontal=True)
     password = st.text_input("Contrasena", type="password")
     if st.button("Ingresar", type="primary"):
@@ -406,11 +492,11 @@ def login_screen() -> None:
 
 
 def profile_screen() -> None:
-    st.title(APP_TITLE)
-    st.subheader("Ingreso al programa")
+    app_header("Ingreso al programa")
     area = st.selectbox("Area", AREAS, index=0, key="profile_area_select")
     company_options = COMPANIES_BY_AREA[area]
     sector_options = SECTORS_BY_AREA[area]
+    is_admin = st.session_state.get("role") == "admin"
     with st.form("profile_form"):
         company = st.selectbox(
             "Empresa",
@@ -426,12 +512,14 @@ def profile_screen() -> None:
             format_func=lambda item: option_label(item, "Todos"),
             key=f"profile_sector_{area}",
         )
-        name = st.text_input("Nombre", placeholder="Nombre y apellido / rol")
+        name_label = "Nombre" if not is_admin else "Nombre (opcional)"
+        name = st.text_input(name_label, placeholder="Nombre y apellido / rol")
         if st.form_submit_button("Ingresar", type="primary"):
-            if not name.strip():
+            if not is_admin and not name.strip():
                 st.warning("Ingresar nombre de usuario.")
                 st.stop()
-            st.session_state.profile = {"area": area, "company": company, "sector": sector, "name": name.strip()}
+            display_name = name.strip() or "Administrador"
+            st.session_state.profile = {"area": area, "company": company, "sector": sector, "name": display_name}
             st.rerun()
     st.stop()
 
@@ -526,12 +614,13 @@ def undo_last_change() -> None:
 
 
 def logout_controls() -> None:
-    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+    col1, col2, col3, col4 = st.columns([3.2, 0.8, 1, 1])
     profile = st.session_state.profile
     role = "Administrador" if st.session_state.role == "admin" else "Usuario"
     area = canonical_area(profile.get("area") or "GENERACION")
+    profile_name = profile.get("name") or role
     col1.caption(
-        f"{role}: {profile['name']} - {area} - {profile.get('company') or 'Todas'} / {profile.get('sector') or 'Todos'}"
+        f"{role}: {profile_name} - {area} - {profile.get('company') or 'Todas'} / {profile.get('sector') or 'Todos'}"
     )
     if col2.button("Deshacer"):
         undo_last_change()
@@ -1311,7 +1400,7 @@ def main() -> None:
     require_session()
     if st.session_state.pop("clear_comment_text_next", False):
         st.session_state.pop("common_comment_text", None)
-    st.title(APP_TITLE)
+    app_header()
     logout_controls()
     admin_panel()
 
@@ -1334,7 +1423,7 @@ def main() -> None:
         {effective_sector(task) for task in scoped_tasks if effective_sector(task)},
         key=lambda item: normalize(item),
     )
-    f1, f2, f3, f4 = st.columns([1, 1.4, 1, 1])
+    f1, f2, f3, f4 = st.columns([1.25, 1.8, 0.9, 0.9])
     inner_sector = f1.selectbox(
         "Sector",
         inner_sector_options,
@@ -1348,8 +1437,9 @@ def main() -> None:
     crew = f2.multiselect("Cuadrilla", crew_options, placeholder="Todas", key="crew_filter")
     start = f3.date_input("Fecha inicio", value=None, format="DD/MM/YYYY", key="start_filter")
     end = f4.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
-    text = st.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG", key="text_filter")
-    show_all_tasks = st.checkbox("Mostrar todas las tareas", value=False, key="show_all_tasks_filter")
+    search_col, show_col = st.columns([3, 1])
+    text = search_col.text_input("Buscar", placeholder="OT, trabajo, ubicacion, KKS/TAG", key="text_filter")
+    show_all_tasks = show_col.checkbox("Mostrar todas las tareas", value=False, key="show_all_tasks_filter")
 
     filters_now = current_filter_state(program["id"])
     filters_before = st.session_state.get("last_filter_state")
@@ -1367,12 +1457,13 @@ def main() -> None:
 
     base_sector = inner_sector or sector
     filtered_base = apply_filters(tasks, company, base_sector, crew, start, end, text)
+    loaded_for_scope = apply_filters(tasks, company, base_sector, "", None, None, "")
     if show_all_tasks:
         filtered = filtered_base
     else:
         filtered = [task for task in filtered_base if not hide_task_after_saved(task, latest)]
     hidden_count = len(filtered_base) - len(filtered)
-    caption = f"{len(filtered)} tarea(s) visibles de {len(scoped_tasks)} cargadas para el perfil seleccionado."
+    caption = f"{len(filtered)} tarea(s) visibles de {len(loaded_for_scope)} cargadas para empresa/sector."
     if hidden_count:
         caption += f" {hidden_count} completada(s) o a replanificar ocultas."
     st.caption(caption)
