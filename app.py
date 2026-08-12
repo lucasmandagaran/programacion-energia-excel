@@ -645,7 +645,7 @@ def undo_last_change() -> None:
 
 
 def logout_controls() -> None:
-    col1, col2, col3, col4 = st.columns([3.2, 0.8, 1, 1])
+    col1, col2, col3, col4, col5 = st.columns([3.0, 0.9, 0.9, 1, 1])
     profile = st.session_state.profile
     role = "Administrador" if st.session_state.role == "admin" else "Usuario"
     area = canonical_area(profile.get("area") or "GENERACION")
@@ -655,9 +655,11 @@ def logout_controls() -> None:
     )
     if col2.button("Deshacer"):
         undo_last_change()
-    if col3.button("Volver al inicio"):
+    if col3.button("Actualizar datos"):
+        st.session_state.request_refresh = True
+    if col4.button("Volver al inicio"):
         request_navigation("profile")
-    if col4.button("Cerrar sesion"):
+    if col5.button("Cerrar sesion"):
         request_navigation("logout")
 
 
@@ -1537,8 +1539,7 @@ def main() -> None:
             if tag_cols[index % 4].button(f"x {label}", key=f"remove_search_filter_{index}_{normalize(label)}"):
                 remove_search_filter(label)
                 st.rerun()
-    show_col, caption_col = st.columns([0.9, 3.4])
-    show_all_tasks = show_col.checkbox("Mostrar todas las tareas", value=False, key="show_all_tasks_filter")
+    show_all_tasks = bool(st.session_state.get("show_all_tasks_filter", False))
 
     filters_now = current_filter_state(program["id"])
     filters_before = st.session_state.get("last_filter_state")
@@ -1565,7 +1566,6 @@ def main() -> None:
     caption = f"{len(filtered)} tarea(s) visibles de {len(loaded_for_scope)} cargadas para empresa/sector."
     if hidden_count:
         caption += f" {hidden_count} completada(s) o a replanificar ocultas."
-    caption_col.caption(caption)
     visible_task_ids = {task["id"] for task in filtered}
     filtered_base_task_ids = {task["id"] for task in filtered_base}
     filtered_advances = [advance for advance in advances if advance.get("task_id") in filtered_base_task_ids]
@@ -1585,12 +1585,14 @@ def main() -> None:
     editor_state = st.session_state.get("task_editor", {})
     if isinstance(editor_state, dict):
         for row_index, changes in editor_state.get("edited_rows", {}).items():
-            if "Estado" in changes:
-                try:
-                    index = int(row_index)
-                except Exception:
-                    continue
-                if 0 <= index < len(df):
+            try:
+                index = int(row_index)
+            except Exception:
+                continue
+            if 0 <= index < len(df):
+                if "Seleccionar" in changes:
+                    df.at[index, "Seleccionar"] = bool(changes["Seleccionar"])
+                if "Estado" in changes:
                     new_status = str(changes["Estado"] or "")
                     original_status = str(df.at[index, "_estado_original"] or "")
                     df.at[index, "Estado"] = new_status
@@ -1601,42 +1603,16 @@ def main() -> None:
                         st.session_state.pending_program_id = program["id"]
                         if new_status == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
                             df.at[index, "Fecha inicio"] = local_today().strftime("%d/%m/%Y")
-    visible_df = df.drop(columns=["_task_id", "_estado_original"], errors="ignore")
-    edited = st.data_editor(
-        visible_df.style.apply(task_status_style, axis=1),
-        hide_index=True,
-        use_container_width=True,
-        disabled=[column for column in visible_df.columns if column not in {"Seleccionar", "Estado"}],
-        column_config={
-            "Seleccionar": st.column_config.CheckboxColumn("Sel."),
-            "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True),
-        },
-        key="task_editor",
-    )
-    if edited.empty:
-        selected_task_ids: list[str] = []
-    else:
-        for index, row in edited.iterrows():
-            if index not in df.index:
-                continue
-            task_id = str(df.at[index, "_task_id"])
-            status = str(row["Estado"] or "")
-            original_status = str(df.at[index, "_estado_original"] or "")
-            if status and status != original_status:
-                pending_changes[task_id] = status
-                st.session_state.pending_program_id = program["id"]
-            elif task_id in pending_changes:
-                pending_changes.pop(task_id, None)
-        selected_task_ids = [
-            str(df.at[index, "_task_id"])
-            for index in edited.index[edited["Seleccionar"] == True].tolist()
-            if index in df.index
-        ]
+    selected_task_ids = [
+        str(row["_task_id"])
+        for _, row in df.iterrows()
+        if bool(row.get("Seleccionar"))
+    ]
     pending_visible_ids = sorted(task_id for task_id in pending_changes if task_id in visible_task_ids)
     pending_all_ids = sorted(pending_changes)
 
-    st.subheader("Cambiar estado")
-    c1, c2, c3 = st.columns([1, 1, 2])
+    st.markdown("#### Cambiar estado")
+    c1, c2, c3 = st.columns([1.0, 0.95, 2.7])
     action = c1.selectbox("Estado para seleccionadas", STATE_ACTIONS)
     if c2.button("Cambiar estado", disabled=not selected_task_ids, use_container_width=True):
         for task_id in selected_task_ids:
@@ -1668,16 +1644,6 @@ def main() -> None:
             return False
         return True
 
-    update_col, pending_col = st.columns([1, 4])
-    if update_col.button("Actualizar datos", use_container_width=True):
-        if pending_all_ids:
-            st.session_state.confirm_refresh = True
-        else:
-            st.session_state.pop("task_editor", None)
-            st.rerun()
-    if pending_all_ids:
-        pending_col.caption(f"{len(pending_all_ids)} avance(s) pendiente(s) de guardar.")
-
     def save_current_pending_work() -> bool:
         save_program_id = st.session_state.get("pending_program_id") or program["id"]
         if pending_all_ids:
@@ -1693,6 +1659,13 @@ def main() -> None:
             return True
         st.warning("No hay avances o comentarios seleccionados para guardar.")
         return False
+
+    if st.session_state.pop("request_refresh", False):
+        if pending_all_ids:
+            st.session_state.confirm_refresh = True
+        else:
+            st.session_state.pop("task_editor", None)
+            st.rerun()
 
     if st.session_state.get("confirm_refresh"):
         st.warning("Hay avances pendientes sin guardar. Elegi como continuar antes de actualizar datos.")
@@ -1745,7 +1718,7 @@ def main() -> None:
             st.session_state.pop("pending_navigation", None)
             st.rerun()
 
-    save_col, comment_col = st.columns([1, 1])
+    save_col, comment_col, pending_col, show_col = st.columns([0.9, 0.95, 2.3, 1.2])
     if save_col.button("Guardar avances", type="primary", disabled=not pending_all_ids):
         if save_current_pending_work():
             st.success(f"{len(pending_visible_ids)} avance(s) guardado(s).")
@@ -1757,6 +1730,35 @@ def main() -> None:
         clear_pending_work()
         st.success(f"{len(selected_task_ids)} comentario(s) guardado(s).")
         st.rerun()
+    if pending_all_ids:
+        pending_col.caption(f"{len(pending_all_ids)} avance(s) pendiente(s) de guardar.")
+    show_col.checkbox("Mostrar todas las tareas", value=show_all_tasks, key="show_all_tasks_filter")
+    st.caption(caption)
+
+    visible_df = df.drop(columns=["_task_id", "_estado_original"], errors="ignore")
+    edited = st.data_editor(
+        visible_df.style.apply(task_status_style, axis=1),
+        hide_index=True,
+        use_container_width=True,
+        disabled=[column for column in visible_df.columns if column not in {"Seleccionar", "Estado"}],
+        column_config={
+            "Seleccionar": st.column_config.CheckboxColumn("Sel."),
+            "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True),
+        },
+        key="task_editor",
+    )
+    if not edited.empty:
+        for index, row in edited.iterrows():
+            if index not in df.index:
+                continue
+            task_id = str(df.at[index, "_task_id"])
+            status = str(row["Estado"] or "")
+            original_status = str(df.at[index, "_estado_original"] or "")
+            if status and status != original_status:
+                pending_changes[task_id] = status
+                st.session_state.pending_program_id = program["id"]
+            elif task_id in pending_changes:
+                pending_changes.pop(task_id, None)
 
     title_col, view_col = st.columns([2, 1])
     title_col.subheader("Avances / registros")
