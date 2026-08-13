@@ -1839,6 +1839,7 @@ def main() -> None:
     require_session()
     if st.session_state.pop("clear_comment_text_next", False):
         st.session_state.pop("common_comment_text", None)
+        st.session_state.pop("common_reason_select", None)
     app_header()
     logout_controls()
     admin_panel()
@@ -2006,11 +2007,12 @@ def main() -> None:
     pending_all_ids = sorted(pending_changes)
 
     st.markdown("#### Cambiar estado")
-    c1, c2, c3 = st.columns([1.0, 0.95, 2.7])
+    c1, c2 = st.columns([1.0, 0.95])
     action = c1.selectbox(
         "Estado para seleccionadas",
         [""] + STATE_ACTIONS,
         format_func=lambda item: option_label(item, "Elegir estado"),
+        help="Se aplica a las tareas tildadas. Si no seleccionas ninguna, cambia el estado directamente en la columna Estado de cada fila.",
     )
     if c2.button("Cambiar estado", disabled=not selected_task_ids or not action, use_container_width=True):
         for task_id in selected_task_ids:
@@ -2018,27 +2020,43 @@ def main() -> None:
         st.session_state.pending_program_id = program["id"]
         st.session_state.pop("task_editor", None)
         st.rerun()
+
     entries = [{"task_id": task_id, "action": pending_changes[task_id]} for task_id in pending_all_ids]
     selected_actions = [entry["action"] for entry in entries]
-    reason = ""
-    if any(item in REASON_ACTIONS for item in selected_actions):
-        reason = c3.selectbox("Motivo", REASONS, format_func=lambda item: option_label(item, "Seleccionar motivo"))
-    observation_required = any(item in REASON_ACTIONS for item in selected_actions) and reason == "Otros"
-    comment_label = "Comentario comun"
-    if observation_required:
-        comment_label = "Comentario comun obligatorio"
-    observation = st.text_input(
-        comment_label,
-        placeholder="Opcional. Obligatorio solo si el motivo es Otros. Tambien sirve para agregar comentario a tareas seleccionadas.",
+    # El motivo aplica a EN ESPERA / REPLANIFICAR: se muestra si hay pendientes
+    # con esos estados o si es el estado que estas por aplicar.
+    pending_needs_reason = any(item in REASON_ACTIONS for item in selected_actions)
+    show_reason = pending_needs_reason or action in REASON_ACTIONS
+
+    st.markdown("#### Comentarios")
+    # El campo se habilita cuando hay tareas seleccionadas o cambios pendientes.
+    comment_enabled = bool(selected_task_ids) or bool(pending_all_ids)
+    if show_reason:
+        reason_col, detail_col = st.columns([1.0, 2.65])
+        reason = reason_col.selectbox(
+            "Motivo (obligatorio)",
+            REASONS,
+            format_func=lambda item: option_label(item, "Elegir motivo"),
+            key="common_reason_select",
+        )
+    else:
+        reason = ""
+        detail_col = st
+    detail_required = show_reason and reason == "Otros"
+    detail_label = "Detalle (obligatorio)" if detail_required else "Detalle (opcional)"
+    observation = detail_col.text_input(
+        detail_label,
+        placeholder="Detalle libre. Obligatorio si el motivo es 'Otros'. Tambien sirve como comentario de las tareas seleccionadas.",
         key="common_comment_text",
+        disabled=not comment_enabled,
     )
 
     def pending_is_valid() -> bool:
-        if any(item in REASON_ACTIONS for item in selected_actions) and not reason:
-            st.warning("Elegir motivo para EN ESPERA o REPLANIFICAR.")
+        if pending_needs_reason and not reason:
+            st.warning("Elegi un motivo para EN ESPERA o REPLANIFICAR.")
             return False
-        if observation_required and not observation.strip():
-            st.warning("Escribir comentario cuando el motivo es Otros.")
+        if pending_needs_reason and reason == "Otros" and not observation.strip():
+            st.warning("Escribi el detalle cuando el motivo es 'Otros'.")
             return False
         return True
 
