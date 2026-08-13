@@ -1982,6 +1982,17 @@ def main() -> None:
                         st.session_state.pending_program_id = program["id"]
                         if new_status == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
                             df.at[index, "Fecha inicio"] = local_today().strftime("%d/%m/%Y")
+
+    # "Seleccionar tareas visibles": marca todas las tareas visibles ANTES de
+    # calcular selected_task_ids, para que "Cambiar estado" y "Guardar cambios"
+    # queden habilitados en el mismo rerun en que se tilda el maestro.
+    if bool(st.session_state.get("select_all_visible_tasks_filter", False)):
+        selected_task_state.update(visible_task_ids)
+        st.session_state.selected_task_ids = sorted(selected_task_state)
+        for sel_index, sel_row in df.iterrows():
+            if str(sel_row["_task_id"]) in visible_task_ids:
+                df.at[sel_index, "Seleccionar"] = True
+
     selected_task_ids = [
         str(row["_task_id"])
         for _, row in df.iterrows()
@@ -1992,8 +2003,12 @@ def main() -> None:
 
     st.markdown("#### Cambiar estado")
     c1, c2, c3 = st.columns([1.0, 0.95, 2.7])
-    action = c1.selectbox("Estado para seleccionadas", STATE_ACTIONS)
-    if c2.button("Cambiar estado", disabled=not selected_task_ids, use_container_width=True):
+    action = c1.selectbox(
+        "Estado para seleccionadas",
+        [""] + STATE_ACTIONS,
+        format_func=lambda item: option_label(item, "Elegir estado"),
+    )
+    if c2.button("Cambiar estado", disabled=not selected_task_ids or not action, use_container_width=True):
         for task_id in selected_task_ids:
             pending_changes[task_id] = action
         st.session_state.pending_program_id = program["id"]
@@ -2096,14 +2111,6 @@ def main() -> None:
         if n3.button("Cancelar salida"):
             st.session_state.pop("pending_navigation", None)
             st.rerun()
-
-    select_all_visible_tasks = bool(st.session_state.get("select_all_visible_tasks_filter", False))
-    if select_all_visible_tasks:
-        selected_task_state.update(visible_task_ids)
-        st.session_state.selected_task_ids = sorted(selected_task_state)
-        for index, row in df.iterrows():
-            if str(row["_task_id"]) in visible_task_ids:
-                df.at[index, "Seleccionar"] = True
 
     save_col, discard_col, comment_col, pending_col, select_all_col, show_col = st.columns([1.0, 1.15, 1.0, 0.95, 1.25, 1.2])
     if save_col.button("Guardar cambios", type="primary", disabled=not pending_all_ids, use_container_width=True):
