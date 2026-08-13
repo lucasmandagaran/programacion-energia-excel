@@ -1186,13 +1186,22 @@ def latest_status_by_task(advances: list[dict[str, Any]]) -> dict[str, dict[str,
     return latest
 
 
+def effective_task_status(task: dict[str, Any], latest: dict[str, dict[str, Any]]) -> str:
+    """Estado efectivo de la tarea: prioriza el ultimo avance guardado en la app
+    y, si no hay, usa el estado que trae el programa (Excel). Normaliza a
+    mayusculas para tolerar distinto formato en el Excel."""
+    advance = latest.get(task["id"], {})
+    status = str(advance.get("action") or task.get("estado_programa") or "SIN AVANCE").strip().upper()
+    if status not in STATE_ACTIONS:
+        status = "SIN AVANCE"
+    return status
+
+
 def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for task in tasks:
         advance = latest.get(task["id"], {})
-        status = advance.get("action") or task.get("estado_programa") or "SIN AVANCE"
-        if status not in STATE_ACTIONS:
-            status = "SIN AVANCE"
+        status = effective_task_status(task, latest)
         display_start = format_date(task.get("fecha_inicio"))
         if status == "EN CURSO" and advance.get("created_at"):
             display_start = advance_date(advance.get("created_at"))
@@ -1277,8 +1286,7 @@ def truncate_display_text(value: Any, limit: int = COMMENT_DISPLAY_LIMIT) -> str
 
 
 def hide_task_after_saved(task: dict[str, Any], latest: dict[str, dict[str, Any]]) -> bool:
-    advance = latest.get(task["id"], {})
-    return str(advance.get("action") or "").strip().upper() in HIDE_AFTER_SAVE_ACTIONS
+    return effective_task_status(task, latest) in HIDE_AFTER_SAVE_ACTIONS
 
 
 def format_date(value: Any) -> str:
