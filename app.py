@@ -654,13 +654,21 @@ def editor_has_status_changes(editor_state: Any) -> bool:
     return False
 
 
+def mark_comment_dirty() -> None:
+    """Marca el comentario como pendiente solo cuando el usuario modifica su texto."""
+    st.session_state["comment_dirty"] = bool(
+        str(st.session_state.get("common_comment_text") or "").strip()
+    )
+
+
 def has_pending_work() -> bool:
     pending = st.session_state.get("pending_state_changes", {})
     comment = str(st.session_state.get("common_comment_text") or "").strip()
+    comment_pending = bool(st.session_state.get("comment_dirty", False)) and bool(comment)
     editor_state = st.session_state.get("task_editor", {})
     # La seleccion de tareas (selected_task_ids / check maestro) no cuenta como
-    # trabajo pendiente: solo cuentan cambios de estado o comentarios.
-    return bool(pending) or bool(comment) or editor_has_status_changes(editor_state)
+    # trabajo pendiente. Un comentario solo cuenta si fue modificado y aun no se guardo.
+    return bool(pending) or comment_pending or editor_has_status_changes(editor_state)
 
 
 def clear_task_selection() -> None:
@@ -682,6 +690,7 @@ def clear_pending_work() -> None:
     st.session_state["select_all_visible_tasks_filter"] = False
     st.session_state["select_all_visible_tasks_prev"] = False
     st.session_state.pop("task_editor", None)
+    st.session_state["comment_dirty"] = False
     st.session_state.clear_comment_text_next = True
     st.session_state.pop("confirm_refresh", None)
     st.session_state.pop("pending_navigation", None)
@@ -1840,6 +1849,7 @@ def main() -> None:
     if st.session_state.pop("clear_comment_text_next", False):
         st.session_state.pop("common_comment_text", None)
         st.session_state.pop("common_reason_select", None)
+        st.session_state["comment_dirty"] = False
     app_header()
     logout_controls()
     admin_panel()
@@ -2049,6 +2059,7 @@ def main() -> None:
         placeholder="Detalle libre. Obligatorio si el motivo es 'Otros'. Tambien sirve como comentario de las tareas seleccionadas.",
         key="common_comment_text",
         disabled=not comment_enabled,
+        on_change=mark_comment_dirty,
     )
 
     def pending_is_valid() -> bool:
