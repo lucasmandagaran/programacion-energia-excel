@@ -1939,17 +1939,28 @@ def main() -> None:
     scoped_task_ids = {task["id"] for task in scoped_tasks}
     scoped_advances = [advance for advance in advances if advance.get("task_id") in scoped_task_ids]
 
-    # Si el usuario destilda "Seleccionar tareas visibles", se desmarcan todas
-    # las tareas que habian quedado seleccionadas.
-    master_now = bool(st.session_state.get("select_all_visible_tasks_filter", False))
-    master_prev = bool(st.session_state.get("select_all_visible_tasks_prev", False))
-    if master_prev and not master_now:
-        st.session_state.pop("selected_task_ids", None)
-        st.session_state.pop("task_editor", None)
-    st.session_state.select_all_visible_tasks_prev = master_now
-
     pending_changes = st.session_state.setdefault("pending_state_changes", {})
     selected_task_state = set(st.session_state.setdefault("selected_task_ids", []))
+
+    # Manejo del check maestro "Seleccionar tareas visibles". Solo actua en la
+    # TRANSICION (cuando se tilda o se destilda), no en cada rerun, para que las
+    # tareas que el usuario destilde individualmente queden respetadas y no se
+    # vuelvan a marcar solas.
+    master_now = bool(st.session_state.get("select_all_visible_tasks_filter", False))
+    master_prev = bool(st.session_state.get("select_all_visible_tasks_prev", False))
+    if master_now and not master_prev:
+        # Recien tildado: seleccionar todas las visibles (una sola vez). Se
+        # descartan ediciones de "Seleccionar" previas del editor; los cambios
+        # de estado ya viven en pending_changes y se reaplican mas abajo.
+        selected_task_state.update(visible_task_ids)
+        st.session_state.pop("task_editor", None)
+    elif master_prev and not master_now:
+        # Recien destildado: limpiar toda la seleccion.
+        selected_task_state.clear()
+        st.session_state.pop("task_editor", None)
+    st.session_state.select_all_visible_tasks_prev = master_now
+    st.session_state.selected_task_ids = sorted(selected_task_state)
+
     df = task_dataframe(filtered, latest)
     for index, row in df.iterrows():
         task_id = str(row["_task_id"])
@@ -1982,16 +1993,6 @@ def main() -> None:
                         st.session_state.pending_program_id = program["id"]
                         if new_status == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
                             df.at[index, "Fecha inicio"] = local_today().strftime("%d/%m/%Y")
-
-    # "Seleccionar tareas visibles": marca todas las tareas visibles ANTES de
-    # calcular selected_task_ids, para que "Cambiar estado" y "Guardar cambios"
-    # queden habilitados en el mismo rerun en que se tilda el maestro.
-    if bool(st.session_state.get("select_all_visible_tasks_filter", False)):
-        selected_task_state.update(visible_task_ids)
-        st.session_state.selected_task_ids = sorted(selected_task_state)
-        for sel_index, sel_row in df.iterrows():
-            if str(sel_row["_task_id"]) in visible_task_ids:
-                df.at[sel_index, "Seleccionar"] = True
 
     selected_task_ids = [
         str(row["_task_id"])
