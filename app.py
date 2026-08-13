@@ -2105,11 +2105,19 @@ def main() -> None:
             if str(row["_task_id"]) in visible_task_ids:
                 df.at[index, "Seleccionar"] = True
 
-    save_col, comment_col, pending_col, select_all_col, show_col = st.columns([0.9, 0.95, 1.45, 1.25, 1.2])
-    if save_col.button("Guardar avances", type="primary", disabled=not pending_all_ids):
+    save_col, discard_col, comment_col, pending_col, select_all_col, show_col = st.columns([1.0, 1.15, 1.0, 0.95, 1.25, 1.2])
+    if save_col.button("Guardar cambios", type="primary", disabled=not pending_all_ids, use_container_width=True):
         if save_current_pending_work():
             st.success(f"{len(pending_visible_ids)} avance(s) guardado(s).")
             st.rerun()
+
+    # "No guardar cambios": descarta los cambios de estado y/o comentarios
+    # pendientes y vuelve al estado previo. Se habilita solo cuando hay algo
+    # que descartar (cambio de estado o comentario), igual que el aviso que
+    # aparece al cambiar de filtro/sector o volver al inicio.
+    if discard_col.button("No guardar cambios", disabled=not has_pending_work(), use_container_width=True):
+        clear_pending_work()
+        st.rerun()
 
     if comment_col.button("Guardar comentario", disabled=not selected_task_ids or not observation.strip()):
         comment_entries = [{"task_id": task_id, "action": "COMENTARIO"} for task_id in selected_task_ids]
