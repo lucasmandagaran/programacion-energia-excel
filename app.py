@@ -1935,6 +1935,9 @@ def main() -> None:
         caption += f" {hidden_count} completada(s) o a replanificar ocultas."
     visible_task_ids = {task["id"] for task in filtered}
     filtered_base_task_ids = {task["id"] for task in filtered_base}
+    # Los avances/registros siguen los MISMOS filtros que el tablero (empresa,
+    # sector, cuadrilla, fechas, busqueda). Se incluyen las tareas completadas o
+    # a replanificar que se ocultan del tablero, para no perder sus registros.
     filtered_advances = [advance for advance in advances if advance.get("task_id") in filtered_base_task_ids]
     scoped_task_ids = {task["id"] for task in scoped_tasks}
     scoped_advances = [advance for advance in advances if advance.get("task_id") in scoped_task_ids]
