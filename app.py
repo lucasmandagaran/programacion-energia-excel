@@ -1991,6 +1991,15 @@ def main() -> None:
     show_all_tasks = bool(st.session_state.get("show_all_tasks_filter", False))
 
     filters_now = current_filter_state(program["id"])
+
+    # Si el usuario acaba de elegir "No guardar cambios", el filtro que ya está
+    # visible pasa a ser el nuevo estado aceptado. Esto evita que en el rerun
+    # siguiente la app vuelva a interpretar ese mismo filtro como un cambio.
+    if st.session_state.pop("accept_current_filters_after_discard", False):
+        st.session_state.last_filter_state = filters_now
+        st.session_state.pop("previous_filter_state", None)
+        st.session_state.pop("filter_change_guard", None)
+
     filters_before = st.session_state.get("last_filter_state")
     if filters_before is None:
         st.session_state.last_filter_state = filters_now
@@ -2276,6 +2285,9 @@ def main() -> None:
         # pendientes y vuelve al estado previo. Se habilita cuando hay algo que
         # descartar (cambio de estado pendiente, estado elegido o comentario).
         if discard_col.button("No guardar cambios", disabled=not (has_pending_work() or has_savable_changes), use_container_width=True):
+            # Descartar los avances/comentarios pendientes y, en el siguiente
+            # rerun, aceptar como definitivo el filtro que ya está en pantalla.
+            st.session_state["accept_current_filters_after_discard"] = True
             clear_pending_work()
             st.rerun()
 
