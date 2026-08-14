@@ -1095,6 +1095,161 @@ def admin_panel() -> None:
                 st.success("Programa ocultado.")
                 st.rerun()
 
+            st.divider()
+            st.subheader("Agregar tarea manual al programa")
+            st.caption(
+                "Permite incorporar una tarea nueva sin volver a importar el Excel. "
+                "La tarea queda vinculada al programa seleccionado."
+            )
+
+            selected_area = program_area(selected)
+            existing_tasks = load_tasks(str(selected["id"]))
+
+            # Las cuadrillas existentes se ofrecen como referencia, pero se permite
+            # escribir una nueva cuadrilla si todavía no figura en el programa.
+            existing_crews = sorted(
+                {
+                    str(task.get("cuadrilla") or "").strip()
+                    for task in existing_tasks
+                    if str(task.get("cuadrilla") or "").strip()
+                }
+            )
+
+            with st.form("manual_task_form", clear_on_submit=True):
+                manual_description = st.text_input("Descripcion de la tarea *")
+
+                date_col1, date_col2 = st.columns(2)
+                manual_start = date_col1.date_input(
+                    "Fecha inicio *",
+                    value=local_today(),
+                    format="DD/MM/YYYY",
+                )
+                manual_end = date_col2.date_input(
+                    "Fecha fin *",
+                    value=local_today(),
+                    format="DD/MM/YYYY",
+                )
+
+                crew_col1, crew_col2 = st.columns([1.0, 1.25])
+                suggested_crew = crew_col1.selectbox(
+                    "Cuadrilla existente",
+                    [""] + existing_crews,
+                    format_func=lambda item: option_label(item, "Elegir / escribir nueva"),
+                )
+                manual_crew = crew_col2.text_input(
+                    "Cuadrilla *",
+                    value=suggested_crew,
+                    placeholder="Ej.: 555, 556A, 720",
+                )
+
+                ot_col, pte_col = st.columns(2)
+                manual_ot = ot_col.text_input("OT", placeholder="Numero de OT")
+                manual_pte = pte_col.text_input("PTE", placeholder="PTE")
+
+                location_col, kks_col = st.columns([1.6, 1.0])
+                manual_location = location_col.text_input(
+                    "Ubicacion tecnica",
+                    placeholder="Ubicacion tecnica",
+                )
+                manual_kks = kks_col.text_input(
+                    "KKS-TAG",
+                    placeholder="KKS / TAG",
+                )
+
+                manual_submit = st.form_submit_button(
+                    "Agregar tarea al programa",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if manual_submit:
+                description = manual_description.strip()
+                crew_value = manual_crew.strip() or suggested_crew.strip()
+                ot_value = ot_text(manual_ot)
+
+                if not description:
+                    st.error("Completar la descripcion de la tarea.")
+                elif not crew_value:
+                    st.error("Completar la cuadrilla.")
+                elif manual_end < manual_start:
+                    st.error("La fecha fin no puede ser anterior a la fecha inicio.")
+                else:
+                    inferred_company, inferred_sector = infer_company_sector(
+                        crew_value,
+                        selected_area,
+                    )
+
+                    # Para tareas manuales de Distribucion, si no se puede inferir
+                    # empresa/sector por la cuadrilla, se usa el alcance actual del
+                    # perfil administrador como respaldo.
+                    profile = st.session_state.get("profile", {})
+                    manual_company = inferred_company or canonical_company(profile.get("company"))
+                    manual_sector = inferred_sector or canonical_sector(profile.get("sector"))
+
+                    positions = []
+                    for task in existing_tasks:
+                        raw = task.get("raw") or {}
+                        if not isinstance(raw, dict):
+                            continue
+                        try:
+                            positions.append(int(raw.get("_posicion_excel")))
+                        except (TypeError, ValueError):
+                            pass
+                    next_position = (max(positions) + 1) if positions else len(existing_tasks)
+
+                    manual_raw = {
+                        "_origen": "MANUAL",
+                        "_posicion_excel": next_position,
+                        "PTE": manual_pte.strip(),
+                        "Descripcion": description,
+                        "OT": ot_value,
+                        "Cuadrilla": crew_value,
+                        "Fecha inicio": manual_start.isoformat(),
+                        "Fecha fin": manual_end.isoformat(),
+                        "Ubicacion tecnica": manual_location.strip(),
+                        "KKS-TAG": manual_kks.strip(),
+                    }
+
+                    digest_source = {
+                        "program_id": str(selected["id"]),
+                        "manual": manual_raw,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    digest = hashlib.sha1(
+                        json.dumps(
+                            digest_source,
+                            sort_keys=True,
+                            ensure_ascii=False,
+                        ).encode("utf-8")
+                    ).hexdigest()
+
+                    task_row = {
+                        "program_id": str(selected["id"]),
+                        "area": selected_area,
+                        "row_hash": digest,
+                        "nro_ot": ot_value,
+                        "tarea": description,
+                        "empresa": manual_company,
+                        "sector": manual_sector,
+                        "cuadrilla": crew_value,
+                        "fecha_inicio": manual_start.isoformat(),
+                        "fecha_fin": manual_end.isoformat(),
+                        "duracion": duration_days(
+                            manual_start.isoformat(),
+                            manual_end.isoformat(),
+                        ),
+                        "estado_programa": "SIN AVANCE",
+                        "ubicacion_tecnica": manual_location.strip(),
+                        "kks_tag": manual_kks.strip(),
+                        "raw": manual_raw,
+                    }
+
+                    sb_insert("tasks", task_row)
+                    st.success(
+                        f"Tarea agregada al programa '{selected['name']}' para la cuadrilla {crew_value}."
+                    )
+                    st.rerun()
+
 
 def selected_crews(value: Any) -> set[str]:
     if not value:
@@ -1247,6 +1402,7 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
                 "Cuadrilla": task.get("cuadrilla") or "",
                 "OT": ot_text(task.get("nro_ot")),
                 "Ubicacion tecnica": task.get("ubicacion_tecnica") or "",
+                "PTE": raw_value(task, ["PTE", "pte"]),
                 "KKS/TAG": task.get("kks_tag") or "",
                 "_task_id": task["id"],
                 "_estado_original": status,
@@ -1277,6 +1433,7 @@ def task_table_column_config() -> dict[str, Any]:
         "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width=82),
         "OT": st.column_config.TextColumn("OT", width=92),
         "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width=290),
+        "PTE": st.column_config.TextColumn("PTE", width=105),
         "KKS/TAG": st.column_config.TextColumn("KKS/TAG", width=110),
     }
 
