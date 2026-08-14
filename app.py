@@ -1857,29 +1857,6 @@ def format_datetime(value: Any) -> str:
 def main() -> None:
     require_session()
 
-    # Restauracion segura de filtros: no escribir directamente sobre keys de widgets.
-    # Al cancelar un cambio de filtro, guardamos los valores anteriores en
-    # deferred_filter_restore. En el siguiente rerun eliminamos las keys ligadas
-    # a widgets y recreamos esos widgets con los valores anteriores como defaults.
-    deferred_restore = st.session_state.pop("deferred_filter_restore", None)
-    filter_restore_defaults: dict[str, Any] = {}
-    if deferred_restore:
-        filter_restore_defaults = dict(deferred_restore)
-        for key in ("program_filter", "sector_filter", "crew_filter", "start_filter", "end_filter"):
-            st.session_state.pop(key, None)
-
-        search_restore = filter_restore_defaults.get("search_terms_filter")
-        if isinstance(search_restore, tuple):
-            search_restore = list(search_restore)
-        st.session_state["search_terms_filter"] = list(search_restore or [])
-
-        st.session_state.last_filter_state = deferred_restore
-        st.session_state.pop("previous_filter_state", None)
-        clear_task_selection()
-
-    if st.session_state.pop("deferred_discard_pending", False):
-        clear_pending_work()
-
     if st.session_state.pop("clear_comment_text_next", False):
         st.session_state.pop("common_comment_text", None)
         st.session_state.pop("common_reason_select", None)
@@ -1897,23 +1874,9 @@ def main() -> None:
         return
 
     program_col, _program_spacer = st.columns([2.1, 2.9])
-
-    program_default = filter_restore_defaults.get("program_filter")
-    program_default_id = ""
-    if isinstance(program_default, dict):
-        program_default_id = str(program_default.get("id") or "")
-    elif program_default:
-        program_default_id = str(program_default)
-
-    program_index = next(
-        (idx for idx, item in enumerate(programs) if str(item.get("id") or "") == program_default_id),
-        0,
-    )
-
     program = program_col.selectbox(
         "Programa",
         programs,
-        index=program_index,
         format_func=lambda item: item["name"],
         key="program_filter",
     )
@@ -1939,12 +1902,9 @@ def main() -> None:
         key=lambda item: normalize(item),
     )
     f1, f2, f3, f4, f5 = st.columns([0.95, 1.25, 0.62, 0.62, 1.95])
-    sector_default = filter_restore_defaults.get("sector_filter", "")
-    sector_index = inner_sector_options.index(sector_default) if sector_default in inner_sector_options else 0
     inner_sector = f1.selectbox(
         "Sector",
         inner_sector_options,
-        index=sector_index,
         format_func=lambda item: option_label(item, "Todos"),
         key="sector_filter",
     )
@@ -1952,26 +1912,9 @@ def main() -> None:
     crew_options = sorted({task.get("cuadrilla") or "" for task in tasks_for_crews if task.get("cuadrilla")})
     if "crew_filter" in st.session_state and not isinstance(st.session_state.get("crew_filter"), list):
         st.session_state.pop("crew_filter", None)
-
-    crew_default_raw = filter_restore_defaults.get("crew_filter", [])
-    if isinstance(crew_default_raw, (tuple, set)):
-        crew_default_raw = list(crew_default_raw)
-    elif not isinstance(crew_default_raw, list):
-        crew_default_raw = [crew_default_raw] if crew_default_raw else []
-    crew_default = [item for item in crew_default_raw if item in crew_options]
-
-    crew = f2.multiselect(
-        "Cuadrilla",
-        crew_options,
-        default=crew_default,
-        placeholder="Todas",
-        key="crew_filter",
-    )
-
-    start_default = filter_restore_defaults.get("start_filter")
-    end_default = filter_restore_defaults.get("end_filter")
-    start = f3.date_input("Fecha inicio", value=start_default, format="DD/MM/YYYY", key="start_filter")
-    end = f4.date_input("Fecha fin", value=end_default, format="DD/MM/YYYY", key="end_filter")
+    crew = f2.multiselect("Cuadrilla", crew_options, placeholder="Todas", key="crew_filter")
+    start = f3.date_input("Fecha inicio", value=None, format="DD/MM/YYYY", key="start_filter")
+    end = f4.date_input("Fecha fin", value=None, format="DD/MM/YYYY", key="end_filter")
     active_search_terms = st.session_state.setdefault("search_terms_filter", [])
     search_field_col, search_value_col = f5.columns([0.9, 1.25])
     search_field_col.selectbox("Buscar por", list(SEARCH_FIELD_OPTIONS.keys()), key="search_field_input")
@@ -1991,14 +1934,6 @@ def main() -> None:
     show_all_tasks = bool(st.session_state.get("show_all_tasks_filter", False))
 
     filters_now = current_filter_state(program["id"])
-
-    # Si el usuario acaba de elegir "No guardar cambios", el filtro que ya está
-    # visible pasa a ser el nuevo estado aceptado. Esto evita que en el rerun
-    # siguiente la app vuelva a interpretar ese mismo filtro como un cambio.
-    if st.session_state.pop("accept_current_filters_after_discard", False):
-        st.session_state.last_filter_state = filters_now
-        st.session_state.pop("previous_filter_state", None)
-        st.session_state.pop("filter_change_guard", None)
 
     filters_before = st.session_state.get("last_filter_state")
     if filters_before is None:
@@ -2219,29 +2154,47 @@ def main() -> None:
     if filter_guard:
         st.warning("Cambiaste un filtro y hay avances o comentarios pendientes sin guardar.")
         f1, f2, f3 = st.columns(3)
+
         if f1.button("Guardar y aplicar filtro", type="primary"):
             previous = filter_guard.get("previous")
             current = filter_guard.get("current")
             if save_current_pending_work():
                 st.session_state.previous_filter_state = previous
                 st.session_state.last_filter_state = current
+                st.session_state.pop("filter_change_guard", None)
                 st.rerun()
-        if f2.button("Aplicar filtro sin guardar"):
-            previous = filter_guard.get("previous")
-            current = filter_guard.get("current")
-            # Los widgets ya existen en este ciclo: diferimos la limpieza.
+
+        def apply_filter_without_saving() -> None:
+            guard = st.session_state.get("filter_change_guard") or {}
+            previous = guard.get("previous")
+            current = guard.get("current")
+            # El usuario confirma el filtro nuevo y descarta todo avance/comentario
+            # pendiente. Como esto corre en callback, ocurre antes del nuevo render.
+            clear_pending_work()
             st.session_state.previous_filter_state = previous
             st.session_state.last_filter_state = current
             st.session_state.pop("filter_change_guard", None)
-            st.session_state["deferred_discard_pending"] = True
-            st.rerun()
 
-        if f3.button("Cancelar cambio de filtro"):
-            # No restaurar keys de widgets en este ciclo. Guardamos el estado
-            # anterior y lo usamos como default al recrear los filtros.
-            st.session_state["deferred_filter_restore"] = filter_guard.get("previous")
+        def cancel_filter_change() -> None:
+            guard = st.session_state.get("filter_change_guard") or {}
+            previous = guard.get("previous")
+            if previous:
+                # Callback de Streamlit: se ejecuta antes del siguiente render,
+                # por lo que es seguro restaurar las keys de los widgets acá.
+                restore_filter_state(previous)
+                st.session_state.last_filter_state = previous
             st.session_state.pop("filter_change_guard", None)
-            st.rerun()
+            st.session_state.pop("previous_filter_state", None)
+            clear_task_selection()
+
+        f2.button(
+            "Aplicar filtro sin guardar",
+            on_click=apply_filter_without_saving,
+        )
+        f3.button(
+            "Cancelar cambio de filtro",
+            on_click=cancel_filter_change,
+        )
 
     pending_navigation = st.session_state.get("pending_navigation")
     if pending_navigation:
@@ -2285,9 +2238,6 @@ def main() -> None:
         # pendientes y vuelve al estado previo. Se habilita cuando hay algo que
         # descartar (cambio de estado pendiente, estado elegido o comentario).
         if discard_col.button("No guardar cambios", disabled=not (has_pending_work() or has_savable_changes), use_container_width=True):
-            # Descartar los avances/comentarios pendientes y, en el siguiente
-            # rerun, aceptar como definitivo el filtro que ya está en pantalla.
-            st.session_state["accept_current_filters_after_discard"] = True
             clear_pending_work()
             st.rerun()
 
