@@ -639,7 +639,6 @@ FILTER_KEYS = [
     "start_filter",
     "end_filter",
     "search_terms_filter",
-    "show_all_tasks_filter",
 ]
 
 
@@ -706,7 +705,6 @@ def current_filter_state(program_id: str) -> dict[str, Any]:
         "start_filter": st.session_state.get("start_filter"),
         "end_filter": st.session_state.get("end_filter"),
         "search_terms_filter": tuple(st.session_state.get("search_terms_filter", [])),
-        "show_all_tasks_filter": bool(st.session_state.get("show_all_tasks_filter", False)),
     }
 
 
