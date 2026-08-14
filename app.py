@@ -982,6 +982,7 @@ def map_excel(df: pd.DataFrame, area: str = "GENERACION") -> list[dict[str, Any]
         tasks.append(
             {
                 "area": area,
+                "orden": len(tasks),
                 "row_hash": digest,
                 "nro_ot": nro_ot,
                 "tarea": tarea,
@@ -1008,7 +1009,18 @@ def list_programs(active_only: bool = True) -> list[dict[str, Any]]:
 
 
 def load_tasks(program_id: str) -> list[dict[str, Any]]:
-    return sb_get("tasks", {"select": "*", "program_id": f"eq.{program_id}", "order": "fecha_inicio.asc,nro_ot.asc"})
+    tasks = sb_get("tasks", {"select": "*", "program_id": f"eq.{program_id}"})
+    # Respeta el orden original del Excel (campo 'orden'). Los programas
+    # cargados antes de existir ese campo (orden nulo/ausente) quedan al final
+    # con el orden anterior por fecha de inicio y OT.
+    tasks.sort(
+        key=lambda t: (
+            t.get("orden") if isinstance(t.get("orden"), int) else 10**9,
+            str(t.get("fecha_inicio") or ""),
+            str(t.get("nro_ot") or ""),
+        )
+    )
+    return tasks
 
 
 def load_advances(program_id: str) -> list[dict[str, Any]]:
@@ -1971,6 +1983,11 @@ def main() -> None:
         # Recien destildado: limpiar toda la seleccion.
         selected_task_state.clear()
         st.session_state.pop("task_editor", None)
+    elif master_now and visible_task_ids and not visible_task_ids.issubset(selected_task_state):
+        # Sigue tildado pero el usuario destildo alguna: destildar el maestro
+        # (ya no estan todas las visibles) sin tocar la seleccion restante.
+        st.session_state["select_all_visible_tasks_filter"] = False
+        master_now = False
     st.session_state.select_all_visible_tasks_prev = master_now
     st.session_state.selected_task_ids = sorted(selected_task_state)
 
@@ -2164,31 +2181,41 @@ def main() -> None:
             st.session_state.pop("pending_navigation", None)
             st.rerun()
 
+    guard_active = bool(
+        st.session_state.get("confirm_refresh")
+        or st.session_state.get("filter_change_guard")
+        or st.session_state.get("pending_navigation")
+    )
+
     save_col, discard_col, pending_col, select_all_col, show_col = st.columns([1.1, 1.15, 1.05, 1.25, 1.2])
-    if save_col.button("Guardar cambios", type="primary", disabled=not has_savable_changes, use_container_width=True):
-        # Contar lo que se va a guardar antes de aplicar/limpiar.
-        affected = set(pending_all_ids)
-        if action and selected_task_ids:
-            affected.update(selected_task_ids)
-        comment_only = not affected and bool(observation.strip()) and bool(selected_task_ids)
-        if save_current_pending_work():
-            if affected:
-                st.success(f"{len(affected)} tarea(s) actualizada(s).")
-            elif comment_only:
-                st.success(f"{len(selected_task_ids)} comentario(s) guardado(s).")
-            else:
-                st.success("Cambios guardados.")
+    if not guard_active:
+        if save_col.button("Guardar cambios", type="primary", disabled=not has_savable_changes, use_container_width=True):
+            # Contar lo que se va a guardar antes de aplicar/limpiar.
+            affected = set(pending_all_ids)
+            if action and selected_task_ids:
+                affected.update(selected_task_ids)
+            comment_only = not affected and bool(observation.strip()) and bool(selected_task_ids)
+            if save_current_pending_work():
+                if affected:
+                    st.success(f"{len(affected)} tarea(s) actualizada(s).")
+                elif comment_only:
+                    st.success(f"{len(selected_task_ids)} comentario(s) guardado(s).")
+                else:
+                    st.success("Cambios guardados.")
+                st.rerun()
+
+        # "No guardar cambios": descarta los cambios de estado y/o comentarios
+        # pendientes y vuelve al estado previo. Se habilita cuando hay algo que
+        # descartar (cambio de estado pendiente, estado elegido o comentario).
+        if discard_col.button("No guardar cambios", disabled=not (has_pending_work() or has_savable_changes), use_container_width=True):
+            clear_pending_work()
             st.rerun()
 
-    # "No guardar cambios": descarta los cambios de estado y/o comentarios
-    # pendientes y vuelve al estado previo. Se habilita cuando hay algo que
-    # descartar (cambio de estado pendiente, estado elegido o comentario).
-    if discard_col.button("No guardar cambios", disabled=not (has_pending_work() or has_savable_changes), use_container_width=True):
-        clear_pending_work()
-        st.rerun()
-
-    if pending_all_ids:
-        pending_col.caption(f"{len(pending_all_ids)} avance(s) pendiente(s) de guardar.")
+        if pending_all_ids:
+            pending_col.caption(f"{len(pending_all_ids)} avance(s) pendiente(s) de guardar.")
+    else:
+        # Hay un aviso activo arriba: resolverlo con sus propios botones.
+        save_col.caption("Resolve el aviso de arriba para continuar.")
     select_all_col.checkbox(
         "Seleccionar tareas visibles",
         key="select_all_visible_tasks_filter",
