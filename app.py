@@ -639,57 +639,32 @@ FILTER_KEYS = [
     "start_filter",
     "end_filter",
     "search_terms_filter",
+    "show_all_tasks_filter",
 ]
-
-
-def editor_has_status_changes(editor_state: Any) -> bool:
-    """True solo si el editor tiene cambios de Estado. Marcar/desmarcar la
-    columna Seleccionar NO se considera un cambio pendiente."""
-    if not isinstance(editor_state, dict):
-        return False
-    for changes in editor_state.get("edited_rows", {}).values():
-        if isinstance(changes, dict) and any(key != "Seleccionar" for key in changes):
-            return True
-    return False
-
-
-def mark_comment_dirty() -> None:
-    """Marca el comentario como pendiente solo cuando el usuario modifica su texto."""
-    st.session_state["comment_dirty"] = bool(
-        str(st.session_state.get("common_comment_text") or "").strip()
-    )
 
 
 def has_pending_work() -> bool:
     pending = st.session_state.get("pending_state_changes", {})
     comment = str(st.session_state.get("common_comment_text") or "").strip()
-    comment_pending = bool(st.session_state.get("comment_dirty", False)) and bool(comment)
     editor_state = st.session_state.get("task_editor", {})
-    # La seleccion de tareas (selected_task_ids / check maestro) no cuenta como
-    # trabajo pendiente. Un comentario solo cuenta si fue modificado y aun no se guardo.
-    return bool(pending) or comment_pending or editor_has_status_changes(editor_state)
-
-
-def clear_task_selection() -> None:
-    """Limpia toda la seleccion de tareas y destilda el check maestro.
-
-    El check maestro se fuerza a False por asignacion explicita (no pop):
-    en Streamlit, hacer pop de la key de un widget NO destilda el checkbox
-    porque conserva su estado interno; asignarle False si lo destilda."""
-    st.session_state.pop("selected_task_ids", None)
-    st.session_state["select_all_visible_tasks_filter"] = False
-    st.session_state["select_all_visible_tasks_prev"] = False
-    st.session_state.pop("task_editor", None)
+    editor_has_state_changes = False
+    if isinstance(editor_state, dict):
+        edited_rows = editor_state.get("edited_rows", {})
+        if isinstance(edited_rows, dict):
+            editor_has_state_changes = any(
+                isinstance(changes, dict) and "Estado" in changes
+                for changes in edited_rows.values()
+            )
+    # Seleccionar tareas (individualmente o con "Seleccionar tareas visibles") no es un cambio
+    # pendiente por si solo. Solo cuentan cambios reales de estado o un comentario escrito.
+    return bool(pending) or bool(comment) or editor_has_state_changes
 
 
 def clear_pending_work() -> None:
     st.session_state.pop("pending_state_changes", None)
     st.session_state.pop("pending_program_id", None)
     st.session_state.pop("selected_task_ids", None)
-    st.session_state["select_all_visible_tasks_filter"] = False
-    st.session_state["select_all_visible_tasks_prev"] = False
     st.session_state.pop("task_editor", None)
-    st.session_state["comment_dirty"] = False
     st.session_state.clear_comment_text_next = True
     st.session_state.pop("confirm_refresh", None)
     st.session_state.pop("pending_navigation", None)
@@ -705,6 +680,7 @@ def current_filter_state(program_id: str) -> dict[str, Any]:
         "start_filter": st.session_state.get("start_filter"),
         "end_filter": st.session_state.get("end_filter"),
         "search_terms_filter": tuple(st.session_state.get("search_terms_filter", [])),
+        "show_all_tasks_filter": bool(st.session_state.get("show_all_tasks_filter", False)),
     }
 
 
@@ -742,7 +718,6 @@ def request_navigation(action: str) -> None:
     if has_pending_work():
         st.session_state.pending_navigation = action
     elif action == "profile":
-        clear_task_selection()
         st.session_state.pop("profile", None)
         st.rerun()
     elif action == "logout":
@@ -765,20 +740,16 @@ def undo_last_change() -> None:
         st.session_state.pop("confirm_refresh", None)
         st.session_state.pop("pending_navigation", None)
         st.session_state.pop("filter_change_guard", None)
-        clear_task_selection()
         st.rerun()
     if has_pending_work():
         clear_pending_work()
-        st.rerun()
-    if st.session_state.get("selected_task_ids") or st.session_state.get("select_all_visible_tasks_filter"):
-        clear_task_selection()
         st.rerun()
     previous = st.session_state.get("previous_filter_state")
     if previous:
         restore_filter_state(previous)
         st.session_state.last_filter_state = previous
         st.session_state.pop("previous_filter_state", None)
-        clear_task_selection()
+        st.session_state.pop("task_editor", None)
         st.rerun()
 
 
@@ -982,7 +953,6 @@ def map_excel(df: pd.DataFrame, area: str = "GENERACION") -> list[dict[str, Any]
         tasks.append(
             {
                 "area": area,
-                "orden": len(tasks),
                 "row_hash": digest,
                 "nro_ot": nro_ot,
                 "tarea": tarea,
@@ -1009,18 +979,7 @@ def list_programs(active_only: bool = True) -> list[dict[str, Any]]:
 
 
 def load_tasks(program_id: str) -> list[dict[str, Any]]:
-    tasks = sb_get("tasks", {"select": "*", "program_id": f"eq.{program_id}"})
-    # Respeta el orden original del Excel (campo 'orden'). Los programas
-    # cargados antes de existir ese campo (orden nulo/ausente) quedan al final
-    # con el orden anterior por fecha de inicio y OT.
-    tasks.sort(
-        key=lambda t: (
-            t.get("orden") if isinstance(t.get("orden"), int) else 10**9,
-            str(t.get("fecha_inicio") or ""),
-            str(t.get("nro_ot") or ""),
-        )
-    )
-    return tasks
+    return sb_get("tasks", {"select": "*", "program_id": f"eq.{program_id}", "order": "fecha_inicio.asc,nro_ot.asc"})
 
 
 def load_advances(program_id: str) -> list[dict[str, Any]]:
@@ -1205,22 +1164,13 @@ def latest_status_by_task(advances: list[dict[str, Any]]) -> dict[str, dict[str,
     return latest
 
 
-def effective_task_status(task: dict[str, Any], latest: dict[str, dict[str, Any]]) -> str:
-    """Estado efectivo de la tarea: prioriza el ultimo avance guardado en la app
-    y, si no hay, usa el estado que trae el programa (Excel). Normaliza a
-    mayusculas para tolerar distinto formato en el Excel."""
-    advance = latest.get(task["id"], {})
-    status = str(advance.get("action") or task.get("estado_programa") or "SIN AVANCE").strip().upper()
-    if status not in STATE_ACTIONS:
-        status = "SIN AVANCE"
-    return status
-
-
 def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for task in tasks:
         advance = latest.get(task["id"], {})
-        status = effective_task_status(task, latest)
+        status = advance.get("action") or task.get("estado_programa") or "SIN AVANCE"
+        if status not in STATE_ACTIONS:
+            status = "SIN AVANCE"
         display_start = format_date(task.get("fecha_inicio"))
         if status == "EN CURSO" and advance.get("created_at"):
             display_start = advance_date(advance.get("created_at"))
@@ -1305,7 +1255,8 @@ def truncate_display_text(value: Any, limit: int = COMMENT_DISPLAY_LIMIT) -> str
 
 
 def hide_task_after_saved(task: dict[str, Any], latest: dict[str, dict[str, Any]]) -> bool:
-    return effective_task_status(task, latest) in HIDE_AFTER_SAVE_ACTIONS
+    advance = latest.get(task["id"], {})
+    return str(advance.get("action") or "").strip().upper() in HIDE_AFTER_SAVE_ACTIONS
 
 
 def format_date(value: Any) -> str:
@@ -1748,19 +1699,22 @@ def render_records_section(
                 "de estado y/o el ultimo comentario independiente de cada tarea segun la opcion elegida."
             )
             if display_log_rows:
-                # Si cambia el conjunto de registros visibles, se destilda el
-                # check maestro y se limpia la seleccion del editor de borrado.
-                visible_advance_ids = tuple(str(row.get("_advance_id", "")) for row in display_log_rows)
-                snapshot_key = f"advances_visible_snapshot{key_suffix}_{records_view}"
+                select_all_key = f"select_all_visible_advances{key_suffix}"
+                select_all_previous_key = f"_previous_{select_all_key}"
                 delete_editor_key = f"delete_advances_editor_{records_view}{key_suffix}"
-                if st.session_state.get(snapshot_key) != visible_advance_ids:
-                    st.session_state.pop(f"select_all_visible_advances{key_suffix}", None)
-                    st.session_state.pop(delete_editor_key, None)
-                    st.session_state[snapshot_key] = visible_advance_ids
                 select_all_visible = st.checkbox(
                     "Seleccionar todo visible",
-                    key=f"select_all_visible_advances{key_suffix}",
+                    key=select_all_key,
                 )
+                previous_select_all_visible = bool(
+                    st.session_state.get(select_all_previous_key, False)
+                )
+                if select_all_visible != previous_select_all_visible:
+                    # Reiniciar el estado del editor cuando cambia el selector masivo.
+                    # Así, al destildarlo, se quitan todos los tildes que agregó este botón.
+                    st.session_state.pop(delete_editor_key, None)
+                    st.session_state[select_all_previous_key] = select_all_visible
+
                 delete_df = pd.DataFrame([{**{"Eliminar": False}, **row} for row in display_log_rows])
                 if select_all_visible:
                     delete_df["Eliminar"] = True
@@ -1770,7 +1724,7 @@ def render_records_section(
                     use_container_width=False,
                     disabled=[column for column in delete_df.columns if column != "Eliminar"],
                     column_config=delete_records_column_config(state_column),
-                    key=f"delete_advances_editor_{records_view}{key_suffix}",
+                    key=delete_editor_key,
                 )
                 selected_delete_ids = (
                     edited_delete.loc[edited_delete["Eliminar"] == True, "_advance_id"].tolist()
@@ -1858,9 +1812,6 @@ def main() -> None:
     require_session()
     if st.session_state.pop("clear_comment_text_next", False):
         st.session_state.pop("common_comment_text", None)
-        st.session_state.pop("common_reason_select", None)
-        st.session_state.pop("state_select_for_selected", None)
-        st.session_state["comment_dirty"] = False
     app_header()
     logout_controls()
     admin_panel()
@@ -1940,9 +1891,6 @@ def main() -> None:
         else:
             st.session_state.previous_filter_state = filters_before
             st.session_state.last_filter_state = filters_now
-            # Cambio el conjunto visible: se limpia la seleccion y se destilda
-            # el check maestro (no queda ninguna tarea seleccionada).
-            clear_task_selection()
 
     base_sector = inner_sector or sector
     filtered_base = apply_filters(tasks, company, base_sector, crew, start, end, active_search_terms)
@@ -1957,40 +1905,12 @@ def main() -> None:
         caption += f" {hidden_count} completada(s) o a replanificar ocultas."
     visible_task_ids = {task["id"] for task in filtered}
     filtered_base_task_ids = {task["id"] for task in filtered_base}
-    # Los avances/registros siguen los MISMOS filtros que el tablero (empresa,
-    # sector, cuadrilla, fechas, busqueda). Se incluyen las tareas completadas o
-    # a replanificar que se ocultan del tablero, para no perder sus registros.
     filtered_advances = [advance for advance in advances if advance.get("task_id") in filtered_base_task_ids]
     scoped_task_ids = {task["id"] for task in scoped_tasks}
     scoped_advances = [advance for advance in advances if advance.get("task_id") in scoped_task_ids]
 
     pending_changes = st.session_state.setdefault("pending_state_changes", {})
     selected_task_state = set(st.session_state.setdefault("selected_task_ids", []))
-
-    # Manejo del check maestro "Seleccionar tareas visibles". Solo actua en la
-    # TRANSICION (cuando se tilda o se destilda), no en cada rerun, para que las
-    # tareas que el usuario destilde individualmente queden respetadas y no se
-    # vuelvan a marcar solas.
-    master_now = bool(st.session_state.get("select_all_visible_tasks_filter", False))
-    master_prev = bool(st.session_state.get("select_all_visible_tasks_prev", False))
-    if master_now and not master_prev:
-        # Recien tildado: seleccionar todas las visibles (una sola vez). Se
-        # descartan ediciones de "Seleccionar" previas del editor; los cambios
-        # de estado ya viven en pending_changes y se reaplican mas abajo.
-        selected_task_state.update(visible_task_ids)
-        st.session_state.pop("task_editor", None)
-    elif master_prev and not master_now:
-        # Recien destildado: limpiar toda la seleccion.
-        selected_task_state.clear()
-        st.session_state.pop("task_editor", None)
-    elif master_now and visible_task_ids and not visible_task_ids.issubset(selected_task_state):
-        # Sigue tildado pero el usuario destildo alguna: destildar el maestro
-        # (ya no estan todas las visibles) sin tocar la seleccion restante.
-        st.session_state["select_all_visible_tasks_filter"] = False
-        master_now = False
-    st.session_state.select_all_visible_tasks_prev = master_now
-    st.session_state.selected_task_ids = sorted(selected_task_state)
-
     df = task_dataframe(filtered, latest)
     for index, row in df.iterrows():
         task_id = str(row["_task_id"])
@@ -2023,7 +1943,6 @@ def main() -> None:
                         st.session_state.pending_program_id = program["id"]
                         if new_status == "EN CURSO" and not str(df.at[index, "Fecha inicio"] or "").strip():
                             df.at[index, "Fecha inicio"] = local_today().strftime("%d/%m/%Y")
-
     selected_task_ids = [
         str(row["_task_id"])
         for _, row in df.iterrows()
@@ -2032,79 +1951,45 @@ def main() -> None:
     pending_visible_ids = sorted(task_id for task_id in pending_changes if task_id in visible_task_ids)
     pending_all_ids = sorted(pending_changes)
 
+    st.markdown("#### Cambiar estado")
+    c1, c2, c3 = st.columns([1.0, 0.95, 2.7])
+    action = c1.selectbox("Estado para seleccionadas", STATE_ACTIONS)
+    if c2.button("Cambiar estado", disabled=not selected_task_ids, use_container_width=True):
+        for task_id in selected_task_ids:
+            pending_changes[task_id] = action
+        st.session_state.pending_program_id = program["id"]
+        st.session_state.pop("task_editor", None)
+        st.rerun()
     entries = [{"task_id": task_id, "action": pending_changes[task_id]} for task_id in pending_all_ids]
     selected_actions = [entry["action"] for entry in entries]
-    pending_needs_reason = any(item in REASON_ACTIONS for item in selected_actions)
+    reason = ""
+    if any(item in REASON_ACTIONS for item in selected_actions):
+        reason = c3.selectbox("Motivo", REASONS, format_func=lambda item: option_label(item, "Seleccionar motivo"))
+    observation_required = any(item in REASON_ACTIONS for item in selected_actions) and reason == "Otros"
+    comment_label = "Comentario comun"
+    if observation_required:
+        comment_label = "Comentario comun obligatorio"
+    observation = st.text_input(
+        comment_label,
+        placeholder="Opcional. Obligatorio solo si el motivo es Otros. Tambien sirve para agregar comentario a tareas seleccionadas.",
+        key="common_comment_text",
+    )
 
-    st.markdown("#### Cambiar estado / comentar")
-    # Los campos aparecen solo cuando hay tareas seleccionadas (o cambios ya
-    # pendientes). El estado y el comentario elegidos aca NO se aplican hasta
-    # tocar "Guardar cambios".
-    if selected_task_ids or pending_all_ids:
-        # Valor previo del desplegable, para decidir si mostrar el motivo antes
-        # de instanciar el widget de estado.
-        action_prev = str(st.session_state.get("state_select_for_selected", "") or "")
-        show_reason = pending_needs_reason or action_prev in REASON_ACTIONS
-
-        if show_reason:
-            estado_col, motivo_col, detalle_col = st.columns([1.0, 1.0, 1.8])
-        else:
-            estado_col, detalle_col = st.columns([1.0, 2.0])
-            motivo_col = None
-
-        action = estado_col.selectbox(
-            "Estado para seleccionadas",
-            [""] + STATE_ACTIONS,
-            format_func=lambda item: option_label(item, "Elegir estado"),
-            key="state_select_for_selected",
-            help="Se aplica a las tareas tildadas al tocar 'Guardar cambios'. Tambien podes cambiar el estado directamente en la columna Estado de cada fila.",
-        )
-        if motivo_col is not None:
-            reason = motivo_col.selectbox(
-                "Motivo (obligatorio)",
-                REASONS,
-                format_func=lambda item: option_label(item, "Elegir motivo"),
-                key="common_reason_select",
-            )
-        else:
-            reason = ""
-
-        # El motivo/detalle obligatorio depende de lo que se va a guardar:
-        # pendientes con EN ESPERA/REPLANIFICAR, o el estado elegido ahora.
-        will_need_reason = pending_needs_reason or action in REASON_ACTIONS
-        detail_required = will_need_reason and reason == "Otros"
-        detail_label = "Detalle (obligatorio)" if detail_required else "Detalle (opcional)"
-        observation = detalle_col.text_input(
-            detail_label,
-            placeholder="Detalle libre. Obligatorio si el motivo es 'Otros'. Tambien sirve como comentario de las tareas seleccionadas.",
-            key="common_comment_text",
-            on_change=mark_comment_dirty,
-        )
-    else:
-        action = ""
-        reason = ""
-        observation = ""
-        st.caption("Selecciona una o mas tareas para cambiar su estado o dejar un comentario.")
+    def pending_is_valid() -> bool:
+        if any(item in REASON_ACTIONS for item in selected_actions) and not reason:
+            st.warning("Elegir motivo para EN ESPERA o REPLANIFICAR.")
+            return False
+        if observation_required and not observation.strip():
+            st.warning("Escribir comentario cuando el motivo es Otros.")
+            return False
+        return True
 
     def save_current_pending_work() -> bool:
         save_program_id = st.session_state.get("pending_program_id") or program["id"]
-        # Aplicar el estado elegido en el desplegable a las tareas seleccionadas.
-        if action and selected_task_ids:
-            for task_id in selected_task_ids:
-                pending_changes[task_id] = action
-            save_program_id = program["id"]
-        current_pending_ids = sorted(pending_changes)
-        current_entries = [{"task_id": tid, "action": pending_changes[tid]} for tid in current_pending_ids]
-        current_actions = [item["action"] for item in current_entries]
-        needs_reason = any(item in REASON_ACTIONS for item in current_actions)
-        if current_pending_ids:
-            if needs_reason and not reason:
-                st.warning("Elegi un motivo para EN ESPERA o REPLANIFICAR.")
+        if pending_all_ids:
+            if not pending_is_valid():
                 return False
-            if needs_reason and reason == "Otros" and not observation.strip():
-                st.warning("Escribi el detalle cuando el motivo es 'Otros'.")
-                return False
-            save_advance_entries(save_program_id, current_entries, reason, observation.strip())
+            save_advance_entries(save_program_id, entries, reason, observation.strip())
             clear_pending_work()
             return True
         if observation.strip() and selected_task_ids:
@@ -2112,22 +1997,14 @@ def main() -> None:
             save_advance_entries(program["id"], comment_entries, "", observation.strip())
             clear_pending_work()
             return True
-        st.warning("No hay cambios ni comentarios para guardar.")
+        st.warning("No hay avances o comentarios seleccionados para guardar.")
         return False
-
-    # Hay algo para guardar si hay pendientes, un estado elegido para las
-    # seleccionadas, o un comentario para las seleccionadas.
-    has_savable_changes = (
-        bool(pending_all_ids)
-        or bool(action and selected_task_ids)
-        or bool(observation.strip() and selected_task_ids)
-    )
 
     if st.session_state.pop("request_refresh", False):
         if pending_all_ids:
             st.session_state.confirm_refresh = True
         else:
-            clear_task_selection()
+            st.session_state.pop("task_editor", None)
             st.rerun()
 
     if st.session_state.get("confirm_refresh"):
@@ -2181,43 +2058,44 @@ def main() -> None:
             st.session_state.pop("pending_navigation", None)
             st.rerun()
 
-    guard_active = bool(
-        st.session_state.get("confirm_refresh")
-        or st.session_state.get("filter_change_guard")
-        or st.session_state.get("pending_navigation")
+    select_all_visible_tasks = bool(st.session_state.get("select_all_visible_tasks_filter", False))
+    previous_select_all_visible_tasks = bool(
+        st.session_state.get("_select_all_visible_tasks_previous", False)
     )
+    if select_all_visible_tasks != previous_select_all_visible_tasks:
+        if select_all_visible_tasks:
+            selected_task_state.update(visible_task_ids)
+        else:
+            # Al destildar el selector masivo, quitar el tilde de todas las tareas
+            # actualmente visibles que fueron alcanzadas por esa selección.
+            selected_task_state.difference_update(visible_task_ids)
+        st.session_state.selected_task_ids = sorted(selected_task_state)
+        st.session_state._select_all_visible_tasks_previous = select_all_visible_tasks
+        # El editor puede conservar cambios visuales de checkboxes entre reruns. Se limpia
+        # su estado; los cambios reales de Estado ya están preservados en pending_state_changes.
+        st.session_state.pop("task_editor", None)
 
-    save_col, discard_col, pending_col, select_all_col, show_col = st.columns([1.1, 1.15, 1.05, 1.25, 1.2])
-    if not guard_active:
-        if save_col.button("Guardar cambios", type="primary", disabled=not has_savable_changes, use_container_width=True):
-            # Contar lo que se va a guardar antes de aplicar/limpiar.
-            affected = set(pending_all_ids)
-            if action and selected_task_ids:
-                affected.update(selected_task_ids)
-            comment_only = not affected and bool(observation.strip()) and bool(selected_task_ids)
-            if save_current_pending_work():
-                if affected:
-                    st.success(f"{len(affected)} tarea(s) actualizada(s).")
-                elif comment_only:
-                    st.success(f"{len(selected_task_ids)} comentario(s) guardado(s).")
-                else:
-                    st.success("Cambios guardados.")
-                st.rerun()
+    for index, row in df.iterrows():
+        task_id = str(row["_task_id"])
+        df.at[index, "Seleccionar"] = task_id in selected_task_state
 
-        # "No guardar cambios": descarta los cambios de estado y/o comentarios
-        # pendientes y vuelve al estado previo. Se habilita cuando hay algo que
-        # descartar (cambio de estado pendiente, estado elegido o comentario).
-        if discard_col.button("No guardar cambios", disabled=not (has_pending_work() or has_savable_changes), use_container_width=True):
-            clear_pending_work()
+    save_col, comment_col, pending_col, select_all_col, show_col = st.columns([0.9, 0.95, 1.45, 1.25, 1.2])
+    if save_col.button("Guardar avances", type="primary", disabled=not pending_all_ids):
+        if save_current_pending_work():
+            st.success(f"{len(pending_visible_ids)} avance(s) guardado(s).")
             st.rerun()
 
-        if pending_all_ids:
-            pending_col.caption(f"{len(pending_all_ids)} avance(s) pendiente(s) de guardar.")
-    else:
-        # Hay un aviso activo arriba: resolverlo con sus propios botones.
-        save_col.caption("Resolve el aviso de arriba para continuar.")
+    if comment_col.button("Guardar comentario", disabled=not selected_task_ids or not observation.strip()):
+        comment_entries = [{"task_id": task_id, "action": "COMENTARIO"} for task_id in selected_task_ids]
+        save_advance_entries(program["id"], comment_entries, "", observation.strip())
+        clear_pending_work()
+        st.success(f"{len(selected_task_ids)} comentario(s) guardado(s).")
+        st.rerun()
+    if pending_all_ids:
+        pending_col.caption(f"{len(pending_all_ids)} avance(s) pendiente(s) de guardar.")
     select_all_col.checkbox(
         "Seleccionar tareas visibles",
+        value=select_all_visible_tasks,
         key="select_all_visible_tasks_filter",
     )
     show_col.checkbox("Mostrar todas las tareas", value=show_all_tasks, key="show_all_tasks_filter")
