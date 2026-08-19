@@ -11,10 +11,29 @@ Esta version no usa Wrike. El flujo es:
 
 ## Archivos
 
-- `app.py`: aplicacion Streamlit.
+- `app.py`: punto de entrada de Streamlit (arranca la app definida en `pe/`).
+- `pe/`: codigo de la aplicacion, organizado en modulos:
+  - `config.py`: constantes y secretos.
+  - `textutils.py`: normalizacion de texto, areas, empresas y sectores.
+  - `supabase_client.py`: llamadas HTTP a la API REST de Supabase.
+  - `data.py`: mapeo del Excel y carga de programas/tareas.
+  - `advances.py`: avances (altas, borrado, estado vigente por tarea).
+  - `filters.py`: filtros del tablero (empresa, sector, cuadrilla, fechas, busqueda).
+  - `export.py`: exportacion a Excel (log, estado final, Wrike, programa actualizado).
+  - `timeutil.py`: fechas/horas en huso horario local.
+  - `session_ui.py`: navegacion y estado pendiente de guardar.
+  - `ui/`: pantallas (login, perfil, panel admin, resumen/dashboard, tablero de tareas).
 - `requirements.txt`: dependencias para Streamlit Cloud.
 - `supabase_schema.sql`: tablas para pegar en Supabase SQL Editor.
 - `.streamlit/secrets.toml.example`: ejemplo de secretos.
+
+## Resumen del programa
+
+Arriba del tablero de tareas se muestra un panel "Resumen del programa" con
+indicadores del programa activo (segun la empresa/sector del perfil que
+entro): total de tareas, completadas, en curso, en espera/a replanificar,
+tareas vencidas sin completar, un grafico de tareas por estado y una tabla de
+avance por empresa/sector.
 
 ## Pasos
 
