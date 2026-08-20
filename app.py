@@ -1482,19 +1482,27 @@ def record_status_style(row: pd.Series) -> list[str]:
     return [STATE_ROW_STYLES.get(status, "") for _ in row]
 
 
-def task_table_column_config() -> dict[str, Any]:
-    return {
+def task_table_column_config(compact: bool = False) -> dict[str, Any]:
+    config = {
         "Seleccionar": st.column_config.CheckboxColumn("Sel.", width=56),
         "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True, width=108),
-        "Titulo tarea": st.column_config.TextColumn("Titulo tarea", width=390),
+        "Titulo tarea": st.column_config.TextColumn("Titulo tarea", width=150 if compact else 390),
         "Fecha inicio": st.column_config.TextColumn("Fecha inicio", width=104),
         "Duracion": st.column_config.TextColumn("Duracion", width=82),
         "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width=82),
-        "OT": st.column_config.TextColumn("OT", width=92),
+        "OT": st.column_config.TextColumn("OT", width=76 if compact else 92),
         "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width=290),
         "PTE": st.column_config.TextColumn("PTE", width=105),
         "KKS/TAG": st.column_config.TextColumn("KKS/TAG", width=110),
     }
+    if compact:
+        # En vista compacta (pensada para celular) se ocultan las columnas
+        # secundarias para que las esenciales entren en pantalla sin scroll
+        # horizontal. El dato sigue disponible en el dataframe subyacente,
+        # solo se oculta de la grilla.
+        for column in ("Fecha inicio", "Duracion", "Cuadrilla", "Ubicacion tecnica", "PTE", "KKS/TAG"):
+            config[column] = None
+    return config
 
 
 def records_table_column_config(state_column: str = "Estado") -> dict[str, Any]:
@@ -2083,6 +2091,85 @@ def format_datetime(value: Any) -> str:
     return str(value)
 
 
+STATE_LABELS = {
+    "EN CURSO": "En curso",
+    "EN ESPERA": "En espera",
+    "COMPLETADO": "Completado",
+    "REPLANIFICAR": "A replanificar",
+    "SIN AVANCE": "Sin avance",
+}
+
+
+def _is_overdue(task: dict[str, Any], status: str) -> bool:
+    if status in {"COMPLETADO"}:
+        return False
+    end = str(task.get("fecha_fin") or "").strip()
+    if not end:
+        return False
+    try:
+        return end[:10] < local_today().isoformat()
+    except Exception:
+        return False
+
+
+def render_dashboard(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]]) -> None:
+    if not tasks:
+        return
+
+    statuses = {task["id"]: effective_task_status(task, latest) for task in tasks}
+    total = len(tasks)
+    counts = {action: 0 for action in STATE_ACTIONS}
+    for status in statuses.values():
+        counts[status] = counts.get(status, 0) + 1
+    completed = counts.get("COMPLETADO", 0)
+    overdue = sum(1 for task in tasks if _is_overdue(task, statuses[task["id"]]))
+    pct_completed = round((completed / total) * 100) if total else 0
+
+    with st.expander("Resumen del programa", expanded=True):
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Tareas", total)
+        m2.metric("Completadas", f"{completed} ({pct_completed}%)")
+        m3.metric("En curso", counts.get("EN CURSO", 0))
+        m4.metric("En espera / replanificar", counts.get("EN ESPERA", 0) + counts.get("REPLANIFICAR", 0))
+        m5.metric("Vencidas sin completar", overdue)
+        if overdue:
+            m5.caption(":red[Requieren atencion]")
+
+        chart_col, table_col = st.columns([1.1, 1.4])
+
+        state_df = pd.DataFrame(
+            {
+                "Estado": [STATE_LABELS.get(action, action) for action in STATE_ACTIONS],
+                "Tareas": [counts.get(action, 0) for action in STATE_ACTIONS],
+            }
+        ).set_index("Estado")
+        chart_col.caption("Tareas por estado")
+        chart_col.bar_chart(state_df, use_container_width=True)
+
+        breakdown_rows: dict[tuple[str, str], dict[str, int]] = {}
+        for task in tasks:
+            key = (effective_company(task) or "Sin empresa", effective_sector(task) or "Sin sector")
+            entry = breakdown_rows.setdefault(key, {"Tareas": 0, "Completadas": 0})
+            entry["Tareas"] += 1
+            if statuses[task["id"]] == "COMPLETADO":
+                entry["Completadas"] += 1
+
+        table_col.caption("Avance por empresa / sector")
+        breakdown_df = pd.DataFrame(
+            [
+                {
+                    "Empresa": company,
+                    "Sector": sector,
+                    "Tareas": data["Tareas"],
+                    "Completadas": data["Completadas"],
+                    "% Completado": round((data["Completadas"] / data["Tareas"]) * 100) if data["Tareas"] else 0,
+                }
+                for (company, sector), data in sorted(breakdown_rows.items())
+            ]
+        )
+        table_col.dataframe(breakdown_df, hide_index=True, use_container_width=True)
+
+
 def main() -> None:
     require_session()
 
@@ -2125,6 +2212,8 @@ def main() -> None:
         )
         render_records_section(tasks, advances, scoped_tasks, scoped_advances, records_key_suffix="admin_direct")
         return
+
+    render_dashboard(scoped_tasks, latest)
 
     inner_sector_options = [""] + sorted(
         {effective_sector(task) for task in scoped_tasks if effective_sector(task)},
@@ -2480,6 +2569,11 @@ def main() -> None:
         key="select_all_visible_tasks_filter",
     )
     show_col.checkbox("Mostrar todas las tareas", value=show_all_tasks, key="show_all_tasks_filter")
+    compact_view = st.checkbox(
+        "Vista compacta (recomendada en celular)",
+        key="compact_view_filter",
+        help="Muestra solo Estado, Titulo y OT para que la tabla entre en pantallas chicas sin scroll horizontal. Los demas datos (cuadrilla, ubicacion, PTE, KKS/TAG, fechas) se pueden ver activando la vista completa.",
+    )
     st.caption(caption)
 
     visible_df = df.drop(columns=["_task_id", "_estado_original"], errors="ignore")
@@ -2488,7 +2582,7 @@ def main() -> None:
         hide_index=True,
         use_container_width=False,
         disabled=[column for column in visible_df.columns if column not in {"Seleccionar", "Estado"}],
-        column_config=task_table_column_config(),
+        column_config=task_table_column_config(compact=compact_view),
         key="task_editor",
     )
     if not edited.empty:
