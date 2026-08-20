@@ -77,7 +77,7 @@ COMPANY_COLUMNS = ["empresa", "contratista", "compania", "cia"]
 SECTOR_COLUMNS = ["sector", "especialidad", "disciplina", "puesto de trabajo"]
 CREW_COLUMNS = ["cuadrilla", "cuadrillas", "cuadrilla gen", "cuadrillagen", "crew", "recurso", "recursos"]
 START_DATE_COLUMNS = ["fecha inicio", "fecha de inicio", "fecha inic", "fecha ini", "inicio", "start", "fecha programada", "fecha de inicio programada", "fechaprogramada"]
-END_DATE_COLUMNS = ["fecha fin", "fecha de fin", "fecha vencimiento", "fecha de vencimiento", "vencimiento", "fin", "due", "fecha cierre", "fecha de cierre", "cierre"]
+END_DATE_COLUMNS = ["fecha fin", "fecha de fin", "fecha vencimiento", "fecha de vencimiento", "vencimiento", "fin", "end", "end date", "due", "due date", "fecha cierre", "fecha de cierre", "cierre"]
 STATUS_COLUMNS = ["estado", "status", "estado actual", "status de usuario", "avance"]
 LOCATION_COLUMNS = ["ubicacion tecnica", "ubicacion", "ubic tecnica", "ubic. tecnica", "ubictecnica", "objeto ubicacion", "objetoubicacion"]
 KKS_COLUMNS = ["kks tag", "kks-tag", "kks/tag", "kks", "tag", "kkstag", "kks tag ubicacion", "kkstagubicacion"]
@@ -1224,16 +1224,31 @@ def admin_panel() -> None:
                                 f"Tarea: {task_title(duplicate) or '-'}"
                             )
                         else:
+                            # Prioridad para empresa/sector: 1) otra tarea del mismo
+                            # programa que ya tenga esa misma cuadrilla (dato real
+                            # cargado del Excel), 2) tabla de cuadrillas conocidas,
+                            # 3) empresa/sector del perfil de quien esta cargando.
+                            crew_match = next(
+                                (
+                                    task
+                                    for task in existing_tasks
+                                    if normalize_crew(task.get("cuadrilla")) == normalize_crew(crew_value)
+                                ),
+                                None,
+                            )
+                            company_from_crew = effective_company(crew_match) if crew_match else ""
+                            sector_from_crew = effective_sector(crew_match) if crew_match else ""
+
                             inferred_company, inferred_sector = infer_company_sector(
                                 crew_value,
                                 manual_area,
                             )
 
                             profile = st.session_state.get("profile", {})
-                            manual_company = inferred_company or canonical_company(
+                            manual_company = company_from_crew or inferred_company or canonical_company(
                                 profile.get("company")
                             )
-                            manual_sector = inferred_sector or canonical_sector(
+                            manual_sector = sector_from_crew or inferred_sector or canonical_sector(
                                 profile.get("sector")
                             )
 
@@ -1461,7 +1476,7 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
                 "Cuadrilla": task.get("cuadrilla") or "",
                 "OT": ot_text(task.get("nro_ot")),
                 "Ubicacion tecnica": task.get("ubicacion_tecnica") or "",
-                "PTE": raw_value(task, ["PTE", "pte"]),
+                "PTE": ot_text(raw_value(task, ["PTE", "pte"])),
                 "KKS/TAG": task.get("kks_tag") or "",
                 "_task_id": task["id"],
                 "_estado_original": status,
@@ -1490,7 +1505,7 @@ def task_table_column_config(compact: bool = False) -> dict[str, Any]:
         "Fecha inicio": st.column_config.TextColumn("Fecha inicio", width=90 if compact else 104),
         "Duracion": st.column_config.TextColumn("Duracion", width=82),
         "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width=68 if compact else 82),
-        "OT": st.column_config.TextColumn("OT", width=92),
+        "OT": st.column_config.TextColumn("OT", width=76 if compact else 92),
         "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width=170 if compact else 290),
         "PTE": st.column_config.TextColumn("PTE", width=105),
         "KKS/TAG": st.column_config.TextColumn("KKS/TAG", width=110),
@@ -1499,7 +1514,7 @@ def task_table_column_config(compact: bool = False) -> dict[str, Any]:
         # En vista compacta (pensada para celular) se ocultan las columnas
         # secundarias menos usadas. El dato sigue disponible en el
         # dataframe subyacente, solo se oculta de la grilla.
-        for column in ("Duracion", "OT", "PTE", "KKS/TAG"):
+        for column in ("Duracion", "PTE", "KKS/TAG"):
             config[column] = None
     return config
 
@@ -2571,7 +2586,7 @@ def main() -> None:
     compact_view = st.checkbox(
         "Vista compacta (recomendada en celular)",
         key="compact_view_filter",
-        help="Muestra Estado, Titulo, Fecha inicio, Cuadrilla y Ubicacion tecnica, pensado para pantallas chicas. Oculta Duracion, OT, PTE y KKS/TAG (se pueden ver activando la vista completa).",
+        help="Muestra Estado, Titulo, Fecha inicio, Cuadrilla, OT y Ubicacion tecnica, pensado para pantallas chicas. Oculta Duracion, PTE y KKS/TAG (se pueden ver activando la vista completa).",
     )
     st.caption(caption)
 
