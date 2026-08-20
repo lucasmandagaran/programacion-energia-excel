@@ -1484,23 +1484,22 @@ def record_status_style(row: pd.Series) -> list[str]:
 
 def task_table_column_config(compact: bool = False) -> dict[str, Any]:
     config = {
-        "Seleccionar": st.column_config.CheckboxColumn("Sel.", width=56),
-        "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True, width=108),
-        "Titulo tarea": st.column_config.TextColumn("Titulo tarea", width=150 if compact else 390),
-        "Fecha inicio": st.column_config.TextColumn("Fecha inicio", width=104),
+        "Seleccionar": st.column_config.CheckboxColumn("Sel.", width=42 if compact else 56),
+        "Estado": st.column_config.SelectboxColumn("Estado", options=STATE_ACTIONS, required=True, width=100 if compact else 108),
+        "Titulo tarea": st.column_config.TextColumn("Titulo tarea", width=220 if compact else 390),
+        "Fecha inicio": st.column_config.TextColumn("Fecha inicio", width=90 if compact else 104),
         "Duracion": st.column_config.TextColumn("Duracion", width=82),
-        "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width=82),
-        "OT": st.column_config.TextColumn("OT", width=76 if compact else 92),
-        "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width=290),
+        "Cuadrilla": st.column_config.TextColumn("Cuadrilla", width=68 if compact else 82),
+        "OT": st.column_config.TextColumn("OT", width=92),
+        "Ubicacion tecnica": st.column_config.TextColumn("Ubicacion tecnica", width=170 if compact else 290),
         "PTE": st.column_config.TextColumn("PTE", width=105),
         "KKS/TAG": st.column_config.TextColumn("KKS/TAG", width=110),
     }
     if compact:
         # En vista compacta (pensada para celular) se ocultan las columnas
-        # secundarias para que las esenciales entren en pantalla sin scroll
-        # horizontal. El dato sigue disponible en el dataframe subyacente,
-        # solo se oculta de la grilla.
-        for column in ("Fecha inicio", "Duracion", "Cuadrilla", "Ubicacion tecnica", "PTE", "KKS/TAG"):
+        # secundarias menos usadas. El dato sigue disponible en el
+        # dataframe subyacente, solo se oculta de la grilla.
+        for column in ("Duracion", "OT", "PTE", "KKS/TAG"):
             config[column] = None
     return config
 
@@ -2572,7 +2571,7 @@ def main() -> None:
     compact_view = st.checkbox(
         "Vista compacta (recomendada en celular)",
         key="compact_view_filter",
-        help="Muestra solo Estado, Titulo y OT para que la tabla entre en pantallas chicas sin scroll horizontal. Los demas datos (cuadrilla, ubicacion, PTE, KKS/TAG, fechas) se pueden ver activando la vista completa.",
+        help="Muestra Estado, Titulo, Fecha inicio, Cuadrilla y Ubicacion tecnica, pensado para pantallas chicas. Oculta Duracion, OT, PTE y KKS/TAG (se pueden ver activando la vista completa).",
     )
     st.caption(caption)
 
