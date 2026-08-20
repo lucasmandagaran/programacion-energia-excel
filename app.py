@@ -1080,22 +1080,6 @@ def admin_panel() -> None:
         programs = list_programs(active_only=False)
         if programs:
             st.divider()
-            selected = st.selectbox(
-                "Programa para administrar",
-                programs,
-                format_func=lambda item: f"{program_area(item)} - {item['name']}",
-            )
-            col1, col2 = st.columns(2)
-            if col1.button("Activar / mostrar a cuadrillas"):
-                sb_patch("programs", {"id": f"eq.{selected['id']}"}, {"active": True})
-                st.success("Programa activado.")
-                st.rerun()
-            if col2.button("Ocultar programa"):
-                sb_patch("programs", {"id": f"eq.{selected['id']}"}, {"active": False})
-                st.success("Programa ocultado.")
-                st.rerun()
-
-            st.divider()
             st.subheader("Agregar tarea manual al programa")
             st.caption(
                 "Permite incorporar una tarea nueva sin volver a importar el Excel. "
