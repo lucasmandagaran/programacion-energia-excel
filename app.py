@@ -2211,8 +2211,6 @@ def main() -> None:
         render_records_section(tasks, advances, scoped_tasks, scoped_advances, records_key_suffix="admin_direct")
         return
 
-    render_dashboard(scoped_tasks, latest)
-
     inner_sector_options = [""] + sorted(
         {effective_sector(task) for task in scoped_tasks if effective_sector(task)},
         key=lambda item: normalize(item),
@@ -2270,6 +2268,8 @@ def main() -> None:
     base_sector = inner_sector or sector
     filtered_base = apply_filters(tasks, company, base_sector, crew, start, end, active_search_terms)
     loaded_for_scope = apply_filters(tasks, company, base_sector, "", None, None, "")
+
+    render_dashboard(filtered_base, latest)
     if show_all_tasks:
         filtered = filtered_base
     else:
