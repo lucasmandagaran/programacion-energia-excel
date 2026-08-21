@@ -13,10 +13,24 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 import streamlit as st
+from openpyxl.styles import Font, PatternFill
 
 
 APP_TITLE = "Programacion Energia"
 LOCAL_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
+ADVANCE_EXPORT_COLUMNS = {
+    "estado",
+    "modificaciones programa",
+    "comentario",
+    "fecha inicio tarea",
+    "fecha finalizacion tarea",
+    "fecha avance",
+    "hora avance",
+    "fecha modificacion",
+    "hora modificacion",
+    "informado por",
+    "empresa informante",
+}
 AREAS = ["GENERACION", "DISTRIBUCION"]
 COMPANIES_BY_AREA = {
     "GENERACION": ["", "MANPETROL", "SAN&FRAN", "OTRA"],
@@ -1955,8 +1969,16 @@ def write_excel(rows: list[dict[str, Any]], columns: list[str] | None = None, sh
         worksheet = writer.sheets[sheet_name]
         worksheet.freeze_panes = "A2"
         worksheet.auto_filter.ref = worksheet.dimensions
+        advance_header_fill = PatternFill("solid", fgColor="9BC2E6")
+        advance_cell_fill = PatternFill("solid", fgColor="DDEBF7")
+        advance_header_font = Font(bold=True, color="1F4E78")
         for column_cells in worksheet.columns:
             header = str(column_cells[0].value or "")
+            if normalize(header) in ADVANCE_EXPORT_COLUMNS:
+                column_cells[0].fill = advance_header_fill
+                column_cells[0].font = advance_header_font
+                for cell in column_cells[1:]:
+                    cell.fill = advance_cell_fill
             max_length = max(len(str(cell.value or "")) for cell in column_cells)
             worksheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, len(header) + 2), 45)
     return buffer.getvalue()
