@@ -47,6 +47,12 @@ DISTRIBUTION_SECTORS = {
 STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE"]
 REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
 HIDE_AFTER_SAVE_ACTIONS = {"COMPLETADO", "REPLANIFICAR"}
+DATE_MODE_TODAY = "Fecha de hoy"
+DATE_MODE_PROGRAM = "Fecha segun programa"
+DATE_MODE_MANUAL = "Fecha manual"
+DATE_MODE_OPTIONS = [DATE_MODE_TODAY, DATE_MODE_PROGRAM, DATE_MODE_MANUAL]
+START_DATE_ACTION = "EN CURSO"
+END_DATE_ACTION = "COMPLETADO"
 SEARCH_FIELD_OPTIONS = {
     "Titulo tarea": ["tarea"],
     "OT": ["nro_ot"],
@@ -1449,7 +1455,7 @@ def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]
         status = effective_task_status(task, latest)
         display_start = format_date(task.get("fecha_inicio"))
         if status == "EN CURSO" and advance.get("created_at"):
-            display_start = advance_date(advance.get("created_at"))
+            display_start = format_date(advance.get("event_date")) if advance.get("event_date") else advance_date(advance.get("created_at"))
         rows.append(
             {
                 "Seleccionar": False,
@@ -1582,10 +1588,23 @@ def save_advance_entries(program_id: str, entries: list[dict[str, str]], reason:
             "reporter_name": profile["name"],
             "reporter_company": profile.get("company") or "",
             "reporter_sector": profile.get("sector") or "",
+            "event_date": entry.get("event_date") or None,
         }
         for entry in entries
     ]
     sb_insert("advances", rows)
+
+
+def resolve_event_date(mode: str, manual_value: Any, task: dict[str, Any], action: str) -> str:
+    """Fecha de inicio/fin de tarea elegida por el usuario al guardar un avance
+    EN CURSO o COMPLETADO. "Fecha de hoy" devuelve vacio para conservar el
+    comportamiento previo (se usa la fecha/hora de creacion del avance)."""
+    if mode == DATE_MODE_PROGRAM:
+        source = task.get("fecha_inicio") if action == START_DATE_ACTION else task.get("fecha_fin")
+        return parse_date(source) or ""
+    if mode == DATE_MODE_MANUAL and manual_value:
+        return manual_value.isoformat()
+    return ""
 
 
 def combined_comment(advance: dict[str, Any]) -> str:
@@ -1726,7 +1745,8 @@ def wrike_dates_for_advance(task: dict[str, Any], advance: dict[str, Any]) -> tu
     action = str(advance.get("action") or "").strip().upper()
     start_date = format_date(task.get("fecha_inicio"))
     end_date = format_date(task.get("fecha_fin"))
-    change_date = advance_date(advance.get("created_at"))
+    event_date = advance.get("event_date")
+    change_date = format_date(event_date) if event_date else advance_date(advance.get("created_at"))
     changed = False
 
     if action == "EN CURSO" and change_date:
@@ -2175,6 +2195,8 @@ def main() -> None:
         st.session_state.pop("common_comment_text", None)
         st.session_state.pop("common_reason_select", None)
         st.session_state.pop("state_select_for_selected", None)
+        st.session_state.pop("event_date_mode_select", None)
+        st.session_state.pop("event_date_manual_input", None)
         st.session_state["comment_dirty"] = False
     app_header()
     logout_controls()
@@ -2195,6 +2217,7 @@ def main() -> None:
         key="program_filter",
     )
     tasks = load_tasks(program["id"])
+    tasks_by_id = {task["id"]: task for task in tasks}
     advances = load_advances(program["id"])
     latest = latest_status_by_task(advances)
 
@@ -2358,22 +2381,37 @@ def main() -> None:
     entries = [{"task_id": task_id, "action": pending_changes[task_id]} for task_id in pending_all_ids]
     selected_actions = [entry["action"] for entry in entries]
     pending_needs_reason = any(item in REASON_ACTIONS for item in selected_actions)
+    pending_needs_start_date = START_DATE_ACTION in selected_actions
+    pending_needs_end_date = END_DATE_ACTION in selected_actions
 
     st.markdown("#### Cambiar estado / comentar")
     # Los campos aparecen solo cuando hay tareas seleccionadas (o cambios ya
     # pendientes). El estado y el comentario elegidos aca NO se aplican hasta
     # tocar "Guardar cambios".
     if selected_task_ids or pending_all_ids:
-        # Valor previo del desplegable, para decidir si mostrar el motivo antes
-        # de instanciar el widget de estado.
+        # Valor previo del desplegable, para decidir si mostrar el motivo/fecha
+        # antes de instanciar el widget de estado.
         action_prev = str(st.session_state.get("state_select_for_selected", "") or "")
         show_reason = pending_needs_reason or action_prev in REASON_ACTIONS
+        show_start_date = pending_needs_start_date or action_prev == START_DATE_ACTION
+        show_end_date = pending_needs_end_date or action_prev == END_DATE_ACTION
+        show_date_mode = show_start_date or show_end_date
 
+        col_widths = [1.0]
         if show_reason:
-            estado_col, motivo_col, detalle_col = st.columns([1.0, 1.0, 1.8])
+            col_widths.append(1.0)
+        if show_date_mode:
+            col_widths.append(1.1)
+        if show_date_mode:
+            col_widths.append(1.4 if show_reason else 1.9)
         else:
-            estado_col, detalle_col = st.columns([1.0, 2.0])
-            motivo_col = None
+            col_widths.append(1.8 if show_reason else 2.0)
+        columns = st.columns(col_widths)
+        col_iter = iter(columns)
+        estado_col = next(col_iter)
+        motivo_col = next(col_iter) if show_reason else None
+        date_mode_col = next(col_iter) if show_date_mode else None
+        detalle_col = next(col_iter)
 
         action = estado_col.selectbox(
             "Estado para seleccionadas",
@@ -2392,6 +2430,34 @@ def main() -> None:
         else:
             reason = ""
 
+        date_mode = DATE_MODE_TODAY
+        manual_event_date = None
+        if date_mode_col is not None:
+            if show_start_date and show_end_date:
+                date_label = "Fecha inicio/fin de tarea"
+            elif show_start_date:
+                date_label = "Fecha de inicio de tarea"
+            else:
+                date_label = "Fecha de finalizacion de tarea"
+            date_mode = date_mode_col.selectbox(
+                date_label,
+                DATE_MODE_OPTIONS,
+                key="event_date_mode_select",
+                help=(
+                    "Aplica a las tareas EN CURSO / COMPLETADO que se guarden ahora. "
+                    "'Fecha de hoy' es el comportamiento actual (fecha en que se carga el avance). "
+                    "'Fecha segun programa' usa la fecha ya cargada en el programa. "
+                    "'Fecha manual' permite elegir otra fecha (por ejemplo, si el trabajo se hizo un dia antes)."
+                ),
+            )
+            if date_mode == DATE_MODE_MANUAL:
+                manual_event_date = date_mode_col.date_input(
+                    "Elegir fecha",
+                    value=local_today(),
+                    format="DD/MM/YYYY",
+                    key="event_date_manual_input",
+                )
+
         # El motivo/detalle obligatorio depende de lo que se va a guardar:
         # pendientes con EN ESPERA/REPLANIFICAR, o el estado elegido ahora.
         will_need_reason = pending_needs_reason or action in REASON_ACTIONS
@@ -2407,7 +2473,15 @@ def main() -> None:
         action = ""
         reason = ""
         observation = ""
+        date_mode = DATE_MODE_TODAY
+        manual_event_date = None
         st.caption("Selecciona una o mas tareas para cambiar su estado o dejar un comentario.")
+
+    def event_date_for_entry(task_id: str, entry_action: str) -> str:
+        if entry_action not in (START_DATE_ACTION, END_DATE_ACTION):
+            return ""
+        task = tasks_by_id.get(task_id, {})
+        return resolve_event_date(date_mode, manual_event_date, task, entry_action)
 
     def save_current_pending_work() -> bool:
         save_program_id = st.session_state.get("pending_program_id") or program["id"]
@@ -2417,7 +2491,14 @@ def main() -> None:
                 pending_changes[task_id] = action
             save_program_id = program["id"]
         current_pending_ids = sorted(pending_changes)
-        current_entries = [{"task_id": tid, "action": pending_changes[tid]} for tid in current_pending_ids]
+        current_entries = [
+            {
+                "task_id": tid,
+                "action": pending_changes[tid],
+                "event_date": event_date_for_entry(tid, pending_changes[tid]),
+            }
+            for tid in current_pending_ids
+        ]
         current_actions = [item["action"] for item in current_entries]
         needs_reason = any(item in REASON_ACTIONS for item in current_actions)
         if current_pending_ids:

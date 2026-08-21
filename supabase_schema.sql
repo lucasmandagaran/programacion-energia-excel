@@ -40,11 +40,13 @@ create table if not exists public.advances (
   reporter_name text not null,
   reporter_company text,
   reporter_sector text,
+  event_date date,
   created_at timestamptz not null default now()
 );
 
 alter table public.programs add column if not exists area text not null default 'GENERACION';
 alter table public.tasks add column if not exists area text not null default 'GENERACION';
+alter table public.advances add column if not exists event_date date;
 update public.programs set area = 'GENERACION' where area is null or trim(area) = '';
 update public.tasks set area = 'GENERACION' where area is null or trim(area) = '';
 
