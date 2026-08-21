@@ -103,6 +103,9 @@ END_DATE_COLUMNS = [
     "fecha de finalizacion",
     "fecha vencimiento",
     "fecha de vencimiento",
+    "fechas vencimiento",
+    "fechas de vencimiento",
+    "fechas de ve",
     "vencimiento",
     "fin",
     "end",
@@ -1497,6 +1500,14 @@ def advance_task_finish_date(advance: dict[str, Any]) -> str:
     return format_date(advance.get("fecha_finalizacion_tarea") or "")
 
 
+def original_start_date(task: dict[str, Any]) -> str:
+    return format_date(task.get("fecha_inicio")) or format_date(raw_value(task, START_DATE_COLUMNS))
+
+
+def original_end_date(task: dict[str, Any]) -> str:
+    return format_date(task.get("fecha_fin")) or format_date(raw_value(task, END_DATE_COLUMNS))
+
+
 def advance_operational_date(advance: dict[str, Any], fallback_created: bool = True) -> str:
     action = str(advance.get("action") or "").strip().upper()
     if action == "EN CURSO":
@@ -1745,8 +1756,8 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
     for advance in source:
         task = tasks_by_id.get(advance["task_id"], {})
         action = advance.get("action", "")
-        original_start_date = format_date(task.get("fecha_inicio"))
-        original_end_date = format_date(task.get("fecha_fin"))
+        original_start = original_start_date(task)
+        original_end = original_end_date(task)
         program_change = ""
         display_status = action
         if final_only:
@@ -1761,8 +1772,8 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
                 "Cuadrilla": task.get("cuadrilla", ""),
                 "KKS/TAG": task.get("kks_tag", ""),
                 "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
-                "Fecha inicio original programa": original_start_date,
-                "Fecha fin original programa": original_end_date,
+                "Fecha inicio original programa": original_start,
+                "Fecha fin original programa": original_end,
                 "Duracion": task.get("duracion", ""),
                 "Estado": display_status,
                 **(
@@ -1808,8 +1819,8 @@ def _date_changed(original: Any, updated: str) -> bool:
 
 def wrike_dates_for_advance(task: dict[str, Any], advance: dict[str, Any]) -> tuple[str, str, str]:
     action = str(advance.get("action") or "").strip().upper()
-    start_date = format_date(task.get("fecha_inicio"))
-    end_date = format_date(task.get("fecha_fin"))
+    start_date = original_start_date(task)
+    end_date = original_end_date(task)
     changed = False
 
     if action == "EN CURSO":
@@ -1856,8 +1867,8 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
                 "Hora avance": advance_time(advance.get("created_at")),
                 "Fecha inicio tarea": advance_task_start_date(advance),
                 "Fecha finalizacion tarea": advance_task_finish_date(advance),
-                "Fecha inicio original programa": format_date(task.get("fecha_inicio")),
-                "Fecha fin original programa": format_date(task.get("fecha_fin")),
+                "Fecha inicio original programa": original_start_date(task),
+                "Fecha fin original programa": original_end_date(task),
                 "Texto breve": task_title(task),
                 "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
                 "Cuadrilla": task.get("cuadrilla", ""),
