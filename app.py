@@ -47,6 +47,10 @@ DISTRIBUTION_SECTORS = {
 STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE"]
 REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
 HIDE_AFTER_SAVE_ACTIONS = {"COMPLETADO", "REPLANIFICAR"}
+DATE_MODE_TODAY = "Fecha de hoy"
+DATE_MODE_PROGRAM = "Fecha segun programa"
+DATE_MODE_MANUAL = "Fecha manual"
+TASK_DATE_MODES = [DATE_MODE_TODAY, DATE_MODE_PROGRAM, DATE_MODE_MANUAL]
 SEARCH_FIELD_OPTIONS = {
     "Titulo tarea": ["tarea"],
     "OT": ["nro_ot"],
@@ -1442,14 +1446,44 @@ def effective_task_status(task: dict[str, Any], latest: dict[str, dict[str, Any]
     return status
 
 
+def task_date_by_mode(task: dict[str, Any], mode: str, manual_value: date | None, field: str) -> str:
+    if mode == DATE_MODE_PROGRAM:
+        source = task.get(field)
+        return parse_date(source) or ""
+    if mode == DATE_MODE_MANUAL:
+        return manual_value.isoformat() if manual_value else ""
+    return local_today().isoformat()
+
+
+def advance_task_start_date(advance: dict[str, Any]) -> str:
+    return format_date(advance.get("fecha_inicio_tarea") or "")
+
+
+def advance_task_finish_date(advance: dict[str, Any]) -> str:
+    return format_date(advance.get("fecha_finalizacion_tarea") or "")
+
+
+def advance_operational_date(advance: dict[str, Any], fallback_created: bool = True) -> str:
+    action = str(advance.get("action") or "").strip().upper()
+    if action == "EN CURSO":
+        value = advance_task_start_date(advance)
+        if value:
+            return value
+    if action == "COMPLETADO":
+        value = advance_task_finish_date(advance)
+        if value:
+            return value
+    return advance_date(advance.get("created_at")) if fallback_created else ""
+
+
 def task_dataframe(tasks: list[dict[str, Any]], latest: dict[str, dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for task in tasks:
         advance = latest.get(task["id"], {})
         status = effective_task_status(task, latest)
         display_start = format_date(task.get("fecha_inicio"))
-        if status == "EN CURSO" and advance.get("created_at"):
-            display_start = advance_date(advance.get("created_at"))
+        if status == "EN CURSO":
+            display_start = advance_task_start_date(advance) or display_start
         rows.append(
             {
                 "Seleccionar": False,
@@ -1513,6 +1547,8 @@ def records_table_column_config(state_column: str = "Estado") -> dict[str, Any]:
         "Tipo registro": st.column_config.TextColumn("Tipo registro", width=130),
         state_column: st.column_config.TextColumn(state_column, width=116),
         "Comentario": st.column_config.TextColumn("Comentario", width=250),
+        "Fecha inicio tarea": st.column_config.TextColumn("Fecha inicio tarea", width=118),
+        "Fecha finalizacion tarea": st.column_config.TextColumn("Fecha finalizacion tarea", width=142),
         "Fecha modificacion": st.column_config.TextColumn("Fecha modificacion", width=118),
         "Hora modificacion": st.column_config.TextColumn("Hora modificacion", width=104),
         "Informado por": st.column_config.TextColumn("Informado por", width=150),
@@ -1570,7 +1606,13 @@ def save_advances(program_id: str, task_ids: list[str], action: str, reason: str
     sb_insert("advances", rows)
 
 
-def save_advance_entries(program_id: str, entries: list[dict[str, str]], reason: str, observation: str) -> None:
+def save_advance_entries(
+    program_id: str,
+    entries: list[dict[str, str]],
+    reason: str,
+    observation: str,
+    task_dates: dict[str, dict[str, str]] | None = None,
+) -> None:
     profile = st.session_state.profile
     rows = [
         {
@@ -1579,6 +1621,8 @@ def save_advance_entries(program_id: str, entries: list[dict[str, str]], reason:
             "action": entry["action"],
             "reason": reason if entry["action"] in REASON_ACTIONS else "",
             "observation": observation,
+            "fecha_inicio_tarea": (task_dates or {}).get(entry["task_id"], {}).get("fecha_inicio_tarea"),
+            "fecha_finalizacion_tarea": (task_dates or {}).get(entry["task_id"], {}).get("fecha_finalizacion_tarea"),
             "reporter_name": profile["name"],
             "reporter_company": profile.get("company") or "",
             "reporter_sector": profile.get("sector") or "",
@@ -1621,6 +1665,8 @@ def order_records_by_area(
             "Tipo registro",
             state_column,
             "Comentario",
+            "Fecha inicio tarea",
+            "Fecha finalizacion tarea",
             "Fecha modificacion",
             "Hora modificacion",
             "Informado por",
@@ -1638,6 +1684,8 @@ def order_records_by_area(
             "Ubicacion tecnica",
             "KKS/TAG",
             "Comentario",
+            "Fecha inicio tarea",
+            "Fecha finalizacion tarea",
             "Fecha modificacion",
             "Hora modificacion",
             "Informado por",
@@ -1691,6 +1739,8 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
                     else {}
                 ),
                 "Comentario": combined_comment(advance),
+                "Fecha inicio tarea": advance_task_start_date(advance),
+                "Fecha finalizacion tarea": advance_task_finish_date(advance),
                 "Fecha avance": advance_date(advance.get("created_at")),
                 "Hora avance": advance_time(advance.get("created_at")),
                 "Informado por": advance.get("reporter_name", ""),
@@ -1726,17 +1776,20 @@ def wrike_dates_for_advance(task: dict[str, Any], advance: dict[str, Any]) -> tu
     action = str(advance.get("action") or "").strip().upper()
     start_date = format_date(task.get("fecha_inicio"))
     end_date = format_date(task.get("fecha_fin"))
-    change_date = advance_date(advance.get("created_at"))
     changed = False
 
-    if action == "EN CURSO" and change_date:
-        changed = _date_changed(task.get("fecha_inicio"), change_date)
-        start_date = change_date
-    elif action == "COMPLETADO" and change_date:
-        changed = _date_changed(task.get("fecha_fin"), change_date)
-        end_date = change_date
+    if action == "EN CURSO":
+        start_change_date = advance_task_start_date(advance) or advance_date(advance.get("created_at"))
+        if start_change_date:
+            changed = _date_changed(task.get("fecha_inicio"), start_change_date)
+            start_date = start_change_date
+    elif action == "COMPLETADO":
+        finish_change_date = advance_task_finish_date(advance) or advance_date(advance.get("created_at"))
+        if finish_change_date:
+            changed = _date_changed(task.get("fecha_fin"), finish_change_date)
+            end_date = finish_change_date
         if not start_date:
-            start_date = change_date
+            start_date = finish_change_date
             changed = True
 
     program_change = "Cambia fecha de tarea" if changed else ""
@@ -1767,6 +1820,8 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
                 "Comentario": combined_comment(advance),
                 "Fecha avance": advance_date(advance.get("created_at")),
                 "Hora avance": advance_time(advance.get("created_at")),
+                "Fecha inicio tarea": advance_task_start_date(advance),
+                "Fecha finalizacion tarea": advance_task_finish_date(advance),
                 "Fecha inicio": start_date,
                 "Fecha fin": end_date,
                 "Texto breve": task_title(task),
@@ -1784,6 +1839,8 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
         "Comentario",
         "Fecha avance",
         "Hora avance",
+        "Fecha inicio tarea",
+        "Fecha finalizacion tarea",
         "Fecha inicio",
         "Fecha fin",
         "Texto breve",
@@ -1887,7 +1944,7 @@ def program_updated_export(tasks: list[dict[str, Any]], advances: list[dict[str,
             state_col = raw_column_name(row, STATUS_COLUMNS) or "Estado"
             row[state_col] = advance.get("action", "")
 
-            changed_on = advance_date(advance.get("created_at"))
+            changed_on = advance_operational_date(advance)
             if advance.get("action") == "EN CURSO" and changed_on:
                 start_col = raw_column_name(row, START_DATE_COLUMNS) or "Fecha inicio"
                 row[start_col] = changed_on
@@ -1947,6 +2004,8 @@ def render_records_section(
             "Tipo registro": advance_record_type(advance),
             state_column: advance.get("action"),
             "Comentario": combined_comment(advance),
+            "Fecha inicio tarea": advance_task_start_date(advance),
+            "Fecha finalizacion tarea": advance_task_finish_date(advance),
             "Informado por": advance.get("reporter_name"),
             "Empresa": effective_company(task),
             "Sector": effective_sector(task),
@@ -2360,6 +2419,10 @@ def main() -> None:
     pending_needs_reason = any(item in REASON_ACTIONS for item in selected_actions)
 
     st.markdown("#### Cambiar estado / comentar")
+    start_date_mode = DATE_MODE_TODAY
+    finish_date_mode = DATE_MODE_TODAY
+    manual_start_task_date: date | None = None
+    manual_finish_task_date: date | None = None
     # Los campos aparecen solo cuando hay tareas seleccionadas (o cambios ya
     # pendientes). El estado y el comentario elegidos aca NO se aplican hasta
     # tocar "Guardar cambios".
@@ -2403,6 +2466,46 @@ def main() -> None:
             key="common_comment_text",
             on_change=mark_comment_dirty,
         )
+
+        planned_actions = set(selected_actions)
+        if action:
+            planned_actions.add(action)
+        date_cols: list[Any] = []
+        if "EN CURSO" in planned_actions and "COMPLETADO" in planned_actions:
+            date_cols = list(st.columns(2))
+        elif "EN CURSO" in planned_actions or "COMPLETADO" in planned_actions:
+            date_cols = [st.container()]
+
+        if "EN CURSO" in planned_actions:
+            with date_cols.pop(0):
+                start_date_mode = st.selectbox(
+                    "Fecha inicio tarea",
+                    TASK_DATE_MODES,
+                    key="start_task_date_mode",
+                    help="Fecha real de inicio para las tareas que se informan EN CURSO.",
+                )
+                if start_date_mode == DATE_MODE_MANUAL:
+                    manual_start_task_date = st.date_input(
+                        "Ingresar fecha inicio tarea",
+                        value=local_today(),
+                        format="DD/MM/YYYY",
+                        key="manual_start_task_date",
+                    )
+        if "COMPLETADO" in planned_actions:
+            with date_cols.pop(0) if date_cols else st.container():
+                finish_date_mode = st.selectbox(
+                    "Fecha finalizacion tarea",
+                    TASK_DATE_MODES,
+                    key="finish_task_date_mode",
+                    help="Fecha real de finalizacion para las tareas que se informan COMPLETADO.",
+                )
+                if finish_date_mode == DATE_MODE_MANUAL:
+                    manual_finish_task_date = st.date_input(
+                        "Ingresar fecha finalizacion tarea",
+                        value=local_today(),
+                        format="DD/MM/YYYY",
+                        key="manual_finish_task_date",
+                    )
     else:
         action = ""
         reason = ""
@@ -2427,7 +2530,31 @@ def main() -> None:
             if needs_reason and reason == "Otros" and not observation.strip():
                 st.warning("Escribi el detalle cuando el motivo es 'Otros'.")
                 return False
-            save_advance_entries(save_program_id, current_entries, reason, observation.strip())
+            tasks_by_id_for_dates = {str(task["id"]): task for task in tasks}
+            task_dates: dict[str, dict[str, str]] = {}
+            for entry in current_entries:
+                task_id = str(entry["task_id"])
+                task = tasks_by_id_for_dates.get(task_id, {})
+                action_for_date = str(entry["action"] or "").strip().upper()
+                if action_for_date == "EN CURSO":
+                    task_dates[task_id] = {
+                        "fecha_inicio_tarea": task_date_by_mode(
+                            task,
+                            start_date_mode,
+                            manual_start_task_date,
+                            "fecha_inicio",
+                        )
+                    }
+                elif action_for_date == "COMPLETADO":
+                    task_dates[task_id] = {
+                        "fecha_finalizacion_tarea": task_date_by_mode(
+                            task,
+                            finish_date_mode,
+                            manual_finish_task_date,
+                            "fecha_fin",
+                        )
+                    }
+            save_advance_entries(save_program_id, current_entries, reason, observation.strip(), task_dates)
             clear_pending_work()
             return True
         if observation.strip() and selected_task_ids:
