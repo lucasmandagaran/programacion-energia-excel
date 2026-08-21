@@ -1745,12 +1745,12 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
     for advance in source:
         task = tasks_by_id.get(advance["task_id"], {})
         action = advance.get("action", "")
-        start_date = format_date(task.get("fecha_inicio"))
-        end_date = format_date(task.get("fecha_fin"))
+        original_start_date = format_date(task.get("fecha_inicio"))
+        original_end_date = format_date(task.get("fecha_fin"))
         program_change = ""
         display_status = action
         if final_only:
-            start_date, end_date, program_change = wrike_dates_for_advance(task, advance)
+            _, _, program_change = wrike_dates_for_advance(task, advance)
             display_status = status_usuario_for_wrike(action)
         rows.append(
             {
@@ -1761,8 +1761,8 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
                 "Cuadrilla": task.get("cuadrilla", ""),
                 "KKS/TAG": task.get("kks_tag", ""),
                 "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
-                "Fecha inicio": start_date,
-                "Fecha fin": end_date,
+                "Fecha inicio original programa": original_start_date,
+                "Fecha fin original programa": original_end_date,
                 "Duracion": task.get("duracion", ""),
                 "Estado": display_status,
                 **(
@@ -1856,8 +1856,8 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
                 "Hora avance": advance_time(advance.get("created_at")),
                 "Fecha inicio tarea": advance_task_start_date(advance),
                 "Fecha finalizacion tarea": advance_task_finish_date(advance),
-                "Fecha inicio": start_date,
-                "Fecha fin": end_date,
+                "Fecha inicio original programa": format_date(task.get("fecha_inicio")),
+                "Fecha fin original programa": format_date(task.get("fecha_fin")),
                 "Texto breve": task_title(task),
                 "Ubicacion tecnica": task.get("ubicacion_tecnica", ""),
                 "Cuadrilla": task.get("cuadrilla", ""),
@@ -1875,8 +1875,8 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
         "Hora avance",
         "Fecha inicio tarea",
         "Fecha finalizacion tarea",
-        "Fecha inicio",
-        "Fecha fin",
+        "Fecha inicio original programa",
+        "Fecha fin original programa",
         "Texto breve",
         "Ubicacion tecnica",
         "Cuadrilla",
@@ -2453,8 +2453,8 @@ def main() -> None:
     pending_needs_reason = any(item in REASON_ACTIONS for item in selected_actions)
 
     st.markdown("#### Cambiar estado / comentar")
-    start_date_mode = DATE_MODE_TODAY
-    finish_date_mode = DATE_MODE_TODAY
+    start_date_mode = DATE_MODE_PROGRAM
+    finish_date_mode = DATE_MODE_PROGRAM
     manual_start_task_date: date | None = None
     manual_finish_task_date: date | None = None
     # Los campos aparecen solo cuando hay tareas seleccionadas (o cambios ya
@@ -2515,6 +2515,7 @@ def main() -> None:
                 start_date_mode = st.selectbox(
                     "Fecha inicio tarea",
                     TASK_DATE_MODES,
+                    index=TASK_DATE_MODES.index(DATE_MODE_PROGRAM),
                     key="start_task_date_mode",
                     help="Fecha real de inicio para las tareas que se informan EN CURSO.",
                 )
@@ -2530,6 +2531,7 @@ def main() -> None:
                 finish_date_mode = st.selectbox(
                     "Fecha finalizacion tarea",
                     TASK_DATE_MODES,
+                    index=TASK_DATE_MODES.index(DATE_MODE_PROGRAM),
                     key="finish_task_date_mode",
                     help="Fecha real de finalizacion para las tareas que se informan COMPLETADO.",
                 )
