@@ -80,8 +80,39 @@ TITLE_COLUMNS = ["title", "titulo", "titulo tarea", "titulo de tarea", "trabajo"
 COMPANY_COLUMNS = ["empresa", "contratista", "compania", "cia"]
 SECTOR_COLUMNS = ["sector", "especialidad", "disciplina", "puesto de trabajo"]
 CREW_COLUMNS = ["cuadrilla", "cuadrillas", "cuadrilla gen", "cuadrillagen", "crew", "recurso", "recursos"]
-START_DATE_COLUMNS = ["fecha inicio", "fecha de inicio", "fecha inic", "fecha ini", "inicio", "start", "fecha programada", "fecha de inicio programada", "fechaprogramada"]
-END_DATE_COLUMNS = ["fecha fin", "fecha de fin", "fecha vencimiento", "fecha de vencimiento", "vencimiento", "fin", "end", "end date", "due", "due date", "fecha cierre", "fecha de cierre", "cierre"]
+START_DATE_COLUMNS = [
+    "fecha inicio",
+    "fecha de inicio",
+    "fecha inic",
+    "fecha ini",
+    "fecha inicio extrema",
+    "fecha de inicio extrema",
+    "inicio",
+    "start",
+    "start date",
+    "fecha programada",
+    "fecha de inicio programada",
+    "fechaprogramada",
+]
+END_DATE_COLUMNS = [
+    "fecha fin",
+    "fecha de fin",
+    "fecha fin extrema",
+    "fecha de fin extrema",
+    "fecha finalizacion",
+    "fecha de finalizacion",
+    "fecha vencimiento",
+    "fecha de vencimiento",
+    "vencimiento",
+    "fin",
+    "end",
+    "end date",
+    "due",
+    "due date",
+    "fecha cierre",
+    "fecha de cierre",
+    "cierre",
+]
 STATUS_COLUMNS = ["estado", "status", "estado actual", "status de usuario", "avance"]
 LOCATION_COLUMNS = ["ubicacion tecnica", "ubicacion", "ubic tecnica", "ubic. tecnica", "ubictecnica", "objeto ubicacion", "objetoubicacion"]
 KKS_COLUMNS = ["kks tag", "kks-tag", "kks/tag", "kks", "tag", "kkstag", "kks tag ubicacion", "kkstagubicacion"]
@@ -1449,6 +1480,9 @@ def effective_task_status(task: dict[str, Any], latest: dict[str, dict[str, Any]
 def task_date_by_mode(task: dict[str, Any], mode: str, manual_value: date | None, field: str) -> str | None:
     if mode == DATE_MODE_PROGRAM:
         source = task.get(field)
+        if not source:
+            candidates = START_DATE_COLUMNS if field == "fecha_inicio" else END_DATE_COLUMNS
+            source = raw_value(task, candidates)
         return parse_date(source)
     if mode == DATE_MODE_MANUAL:
         return manual_value.isoformat() if manual_value else None
