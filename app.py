@@ -1446,12 +1446,12 @@ def effective_task_status(task: dict[str, Any], latest: dict[str, dict[str, Any]
     return status
 
 
-def task_date_by_mode(task: dict[str, Any], mode: str, manual_value: date | None, field: str) -> str:
+def task_date_by_mode(task: dict[str, Any], mode: str, manual_value: date | None, field: str) -> str | None:
     if mode == DATE_MODE_PROGRAM:
         source = task.get(field)
-        return parse_date(source) or ""
+        return parse_date(source)
     if mode == DATE_MODE_MANUAL:
-        return manual_value.isoformat() if manual_value else ""
+        return manual_value.isoformat() if manual_value else None
     return local_today().isoformat()
 
 
@@ -2537,22 +2537,36 @@ def main() -> None:
                 task = tasks_by_id_for_dates.get(task_id, {})
                 action_for_date = str(entry["action"] or "").strip().upper()
                 if action_for_date == "EN CURSO":
-                    task_dates[task_id] = {
-                        "fecha_inicio_tarea": task_date_by_mode(
-                            task,
-                            start_date_mode,
-                            manual_start_task_date,
-                            "fecha_inicio",
+                    start_task_date = task_date_by_mode(
+                        task,
+                        start_date_mode,
+                        manual_start_task_date,
+                        "fecha_inicio",
+                    )
+                    if not start_task_date:
+                        st.warning(
+                            "Hay una tarea EN CURSO sin fecha de inicio en el programa. "
+                            "Elegí 'Fecha de hoy' o 'Fecha manual'."
                         )
+                        return False
+                    task_dates[task_id] = {
+                        "fecha_inicio_tarea": start_task_date
                     }
                 elif action_for_date == "COMPLETADO":
-                    task_dates[task_id] = {
-                        "fecha_finalizacion_tarea": task_date_by_mode(
-                            task,
-                            finish_date_mode,
-                            manual_finish_task_date,
-                            "fecha_fin",
+                    finish_task_date = task_date_by_mode(
+                        task,
+                        finish_date_mode,
+                        manual_finish_task_date,
+                        "fecha_fin",
+                    )
+                    if not finish_task_date:
+                        st.warning(
+                            "Hay una tarea COMPLETADA sin fecha de fin en el programa. "
+                            "Elegí 'Fecha de hoy' o 'Fecha manual'."
                         )
+                        return False
+                    task_dates[task_id] = {
+                        "fecha_finalizacion_tarea": finish_task_date
                     }
             save_advance_entries(save_program_id, current_entries, reason, observation.strip(), task_dates)
             clear_pending_work()
