@@ -39,6 +39,9 @@ create table if not exists public.advances (
   observation text,
   fecha_inicio_tarea date,
   fecha_finalizacion_tarea date,
+  integrantes text,
+  movil text,
+  tetra text,
   reporter_name text not null,
   reporter_company text,
   reporter_sector text,
@@ -49,6 +52,9 @@ alter table public.programs add column if not exists area text not null default 
 alter table public.tasks add column if not exists area text not null default 'GENERACION';
 alter table public.advances add column if not exists fecha_inicio_tarea date;
 alter table public.advances add column if not exists fecha_finalizacion_tarea date;
+alter table public.advances add column if not exists integrantes text;
+alter table public.advances add column if not exists movil text;
+alter table public.advances add column if not exists tetra text;
 update public.programs set area = 'GENERACION' where area is null or trim(area) = '';
 update public.tasks set area = 'GENERACION' where area is null or trim(area) = '';
 
