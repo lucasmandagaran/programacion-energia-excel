@@ -136,11 +136,13 @@ STATUS_COLUMNS = ["estado", "status", "estado actual", "status de usuario", "ava
 LOCATION_COLUMNS = ["ubicacion tecnica", "ubicacion", "ubic tecnica", "ubic. tecnica", "ubictecnica", "objeto ubicacion", "objetoubicacion"]
 KKS_COLUMNS = ["kks tag", "kks-tag", "kks/tag", "kks", "tag", "kkstag", "kks tag ubicacion", "kkstagubicacion"]
 CREW_STATUS_CUADRILLA_COLUMNS = ["cuadrilla"]
-CREW_STATUS_MOVIL_COLUMNS = ["interno movil", "movil", "interno"]
-CREW_STATUS_TETRA_COLUMNS = ["tetra"]
+CREW_STATUS_MOVIL_COLUMNS = ["interno movil", "movil", "interno", "int"]
+CREW_STATUS_TETRA_COLUMNS = ["tetra", "contacto"]
 CREW_STATUS_ENCARGADO_COLUMNS = ["encargado"]
 CREW_STATUS_OPERARIO_COLUMNS = ["operario"]
+CREW_STATUS_INTEGRANTES_COLUMNS = ["conformacion de equipo", "conformacion equipo", "equipo", "integrantes"]
 CREW_STATUS_DISPONIBILIDAD_COLUMNS = ["disponibilidad"]
+CREW_STATUS_NA_VALUES = {"na", "n a"}
 
 
 def option_label(value: str, empty_label: str) -> str:
@@ -1170,6 +1172,10 @@ def read_crew_status_table(uploaded_file: Any) -> pd.DataFrame | None:
     return None
 
 
+def blank_if_na(value: str) -> str:
+    return "" if normalize(value) in CREW_STATUS_NA_VALUES else value
+
+
 def map_crew_status_dataframe(df: pd.DataFrame) -> list[dict[str, str]]:
     columns = list(df.columns)
     mapping = {
@@ -1178,8 +1184,10 @@ def map_crew_status_dataframe(df: pd.DataFrame) -> list[dict[str, str]]:
         "tetra": find_column(columns, CREW_STATUS_TETRA_COLUMNS),
         "encargado": find_column(columns, CREW_STATUS_ENCARGADO_COLUMNS),
         "operario": find_column(columns, CREW_STATUS_OPERARIO_COLUMNS),
+        "integrantes": find_column(columns, CREW_STATUS_INTEGRANTES_COLUMNS),
         "disponibilidad": find_column(columns, CREW_STATUS_DISPONIBILIDAD_COLUMNS),
     }
+    has_disponibilidad = mapping["disponibilidad"] is not None
     seen_crews: set[str] = set()
     entries: list[dict[str, str]] = []
     for _, row in df.iterrows():
@@ -1193,15 +1201,20 @@ def map_crew_status_dataframe(df: pd.DataFrame) -> list[dict[str, str]]:
         encargado = row_text(row, mapping["encargado"])
         operario = row_text(row, mapping["operario"])
         integrantes = " / ".join(part for part in [encargado, operario] if part)
-        disponibilidad = row_text(row, mapping["disponibilidad"])
-        estado_operativo = "Operativa" if normalize(disponibilidad) == "disponible" else "No operativa"
+        if not integrantes:
+            integrantes = blank_if_na(row_text(row, mapping["integrantes"]))
+        if has_disponibilidad:
+            disponibilidad = row_text(row, mapping["disponibilidad"])
+            estado_operativo = "Operativa" if normalize(disponibilidad) == "disponible" else "No operativa"
+        else:
+            estado_operativo = "Operativa"
         entries.append(
             {
                 "cuadrilla": cuadrilla,
                 "estado_operativo": estado_operativo,
                 "integrantes": integrantes,
-                "movil": row_text(row, mapping["movil"]),
-                "tetra": row_text(row, mapping["tetra"]),
+                "movil": blank_if_na(row_text(row, mapping["movil"])),
+                "tetra": blank_if_na(row_text(row, mapping["tetra"])),
             }
         )
     return entries
