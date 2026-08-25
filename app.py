@@ -1428,10 +1428,6 @@ def apply_filters(
     crew_values = selected_crews(crew)
     start_iso = start.isoformat() if start else ""
     end_iso = end.isoformat() if end else ""
-    if start_iso and not end_iso:
-        end_iso = start_iso
-    elif end_iso and not start_iso:
-        start_iso = end_iso
     search_filters = [parse_search_filter_label(item) for item in (text or [])] if isinstance(text, (list, tuple, set)) else []
     if not search_filters and text:
         search_filters = [("Todos los campos", str(text))]
@@ -1460,8 +1456,15 @@ def apply_filters(
                 task_start = task_end
             if not task_start and not task_end:
                 continue
-            if task_start > end_iso or task_end < start_iso:
-                continue
+            if start_iso and end_iso:
+                if task_start < start_iso or task_end > end_iso:
+                    continue
+            elif start_iso:
+                if task_start != start_iso:
+                    continue
+            elif end_iso:
+                if task_start > end_iso or task_end < end_iso:
+                    continue
         if search_filters:
             filters_by_field: dict[str, list[str]] = {}
             for field, value in search_filters:
