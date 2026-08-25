@@ -22,9 +22,6 @@ ADVANCE_EXPORT_COLUMNS = {
     "estado",
     "modificaciones programa",
     "comentario",
-    "integrantes",
-    "movil",
-    "tetra",
     "fecha inicio tarea",
     "fecha finalizacion tarea",
     "fecha avance",
@@ -64,8 +61,6 @@ DISTRIBUTION_SECTORS = {
 STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE"]
 REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
 HIDE_AFTER_SAVE_ACTIONS = {"COMPLETADO", "REPLANIFICAR"}
-INFO_CUADRILLA_ACTION = "INFO CUADRILLA"
-NON_STATUS_ACTIONS = {"COMENTARIO", INFO_CUADRILLA_ACTION}
 DATE_MODE_TODAY = "Fecha de hoy"
 DATE_MODE_PROGRAM = "Fecha segun programa"
 DATE_MODE_MANUAL = "Fecha manual"
@@ -83,7 +78,6 @@ STATE_ROW_STYLES = {
     "EN ESPERA": "background-color: rgba(214, 158, 46, 0.30); color: #fff8e5; font-weight: 700;",
     "REPLANIFICAR": "background-color: rgba(248, 81, 73, 0.30); color: #fff0ef; font-weight: 700;",
     "COMENTARIO": "background-color: rgba(137, 87, 229, 0.22); color: #f6efff; font-weight: 700;",
-    "INFO CUADRILLA": "background-color: rgba(13, 148, 136, 0.24); color: #e8fffb; font-weight: 700;",
     "SIN AVANCE": "background-color: rgba(139, 148, 158, 0.14); color: #f0f3f6;",
 }
 COMMENT_DISPLAY_LIMIT = 95
@@ -541,7 +535,7 @@ def delete_advances(advance_ids: list[str]) -> None:
 
 def is_status_advance(advance: dict[str, Any]) -> bool:
     action = str(advance.get("action") or "").strip().upper()
-    return bool(action) and action not in NON_STATUS_ACTIONS
+    return bool(action) and action != "COMENTARIO"
 
 
 def advance_has_comment(advance: dict[str, Any]) -> bool:
@@ -550,13 +544,7 @@ def advance_has_comment(advance: dict[str, Any]) -> bool:
     return bool(reason or observation)
 
 
-def is_crew_info_advance(advance: dict[str, Any]) -> bool:
-    return str(advance.get("action") or "").strip().upper() == INFO_CUADRILLA_ACTION
-
-
 def advance_record_type(advance: dict[str, Any]) -> str:
-    if is_crew_info_advance(advance):
-        return "Info cuadrilla"
     if not is_status_advance(advance):
         return "Comentario"
     if advance_has_comment(advance):
@@ -724,28 +712,14 @@ def mark_comment_dirty() -> None:
     )
 
 
-def mark_crew_info_dirty() -> None:
-    """Marca la info de cuadrilla como pendiente solo si algun campo tiene contenido."""
-    st.session_state["crew_info_dirty"] = any(
-        str(st.session_state.get(key) or "").strip()
-        for key in ("crew_info_integrantes", "crew_info_movil", "crew_info_tetra")
-    )
-
-
 def has_pending_work() -> bool:
     pending = st.session_state.get("pending_state_changes", {})
     comment = str(st.session_state.get("common_comment_text") or "").strip()
     comment_pending = bool(st.session_state.get("comment_dirty", False)) and bool(comment)
-    crew_info_filled = any(
-        str(st.session_state.get(key) or "").strip()
-        for key in ("crew_info_integrantes", "crew_info_movil", "crew_info_tetra")
-    )
-    crew_info_pending = bool(st.session_state.get("crew_info_dirty", False)) and crew_info_filled
     editor_state = st.session_state.get("task_editor", {})
     # La seleccion de tareas (selected_task_ids / check maestro) no cuenta como
-    # trabajo pendiente. Un comentario o info de cuadrilla solo cuenta si fue
-    # modificado y aun no se guardo.
-    return bool(pending) or comment_pending or crew_info_pending or editor_has_status_changes(editor_state)
+    # trabajo pendiente. Un comentario solo cuenta si fue modificado y aun no se guardo.
+    return bool(pending) or comment_pending or editor_has_status_changes(editor_state)
 
 
 def clear_task_selection() -> None:
@@ -769,8 +743,6 @@ def clear_pending_work() -> None:
     st.session_state.pop("task_editor", None)
     st.session_state["comment_dirty"] = False
     st.session_state.clear_comment_text_next = True
-    st.session_state["crew_info_dirty"] = False
-    st.session_state.clear_crew_info_next = True
     st.session_state.pop("confirm_refresh", None)
     st.session_state.pop("pending_navigation", None)
     st.session_state.pop("filter_change_guard", None)
@@ -1509,7 +1481,7 @@ def apply_filters(
 def latest_status_by_task(advances: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for advance in sorted(advances, key=lambda item: item.get("created_at", ""), reverse=True):
-        if advance["task_id"] not in latest and advance.get("action") not in NON_STATUS_ACTIONS:
+        if advance["task_id"] not in latest and advance.get("action") != "COMENTARIO":
             latest[advance["task_id"]] = advance
     return latest
 
@@ -1600,15 +1572,9 @@ def task_status_style(row: pd.Series) -> list[str]:
 
 
 def record_status_style(row: pd.Series) -> list[str]:
-    record_type = str(row.get("Tipo registro") or "").strip()
-    if record_type == "Comentario":
-        style_key = "COMENTARIO"
-    elif record_type == "Info cuadrilla":
-        style_key = "INFO CUADRILLA"
-    else:
-        state_column = "Estado final" if "Estado final" in row.index else "Estado"
-        style_key = str(row.get(state_column) or "").strip().upper()
-    return [STATE_ROW_STYLES.get(style_key, "") for _ in row]
+    state_column = "Estado final" if "Estado final" in row.index else "Estado"
+    status = str(row.get(state_column) or "").strip().upper()
+    return [STATE_ROW_STYLES.get(status, "") for _ in row]
 
 
 def task_table_column_config(compact: bool = False) -> dict[str, Any]:
@@ -1643,9 +1609,6 @@ def records_table_column_config(state_column: str = "Estado") -> dict[str, Any]:
         "Tipo registro": st.column_config.TextColumn("Tipo registro", width=130),
         state_column: st.column_config.TextColumn(state_column, width=116),
         "Comentario": st.column_config.TextColumn("Comentario", width=250),
-        "Integrantes": st.column_config.TextColumn("Integrantes", width=180),
-        "Movil": st.column_config.TextColumn("Movil", width=90),
-        "Tetra": st.column_config.TextColumn("Tetra", width=90),
         "Fecha inicio tarea": st.column_config.TextColumn("Fecha inicio tarea", width=118),
         "Fecha finalizacion tarea": st.column_config.TextColumn("Fecha finalizacion tarea", width=142),
         "Fecha modificacion": st.column_config.TextColumn("Fecha modificacion", width=118),
@@ -1731,33 +1694,6 @@ def save_advance_entries(
     sb_insert("advances", rows)
 
 
-def save_crew_info_entries(
-    program_id: str,
-    task_ids: list[str],
-    integrantes: str,
-    movil: str,
-    tetra: str,
-) -> None:
-    profile = st.session_state.profile
-    rows = [
-        {
-            "program_id": program_id,
-            "task_id": task_id,
-            "action": INFO_CUADRILLA_ACTION,
-            "reason": "",
-            "observation": "",
-            "integrantes": integrantes,
-            "movil": movil,
-            "tetra": tetra,
-            "reporter_name": profile["name"],
-            "reporter_company": profile.get("company") or "",
-            "reporter_sector": profile.get("sector") or "",
-        }
-        for task_id in task_ids
-    ]
-    sb_insert("advances", rows)
-
-
 def combined_comment(advance: dict[str, Any]) -> str:
     reason = str(advance.get("reason") or "").strip()
     observation = str(advance.get("observation") or "").strip()
@@ -1791,9 +1727,6 @@ def order_records_by_area(
             "Tipo registro",
             state_column,
             "Comentario",
-            "Integrantes",
-            "Movil",
-            "Tetra",
             "Fecha inicio tarea",
             "Fecha finalizacion tarea",
             "Fecha modificacion",
@@ -1813,9 +1746,6 @@ def order_records_by_area(
             "Ubicacion tecnica",
             "KKS/TAG",
             "Comentario",
-            "Integrantes",
-            "Movil",
-            "Tetra",
             "Fecha inicio tarea",
             "Fecha finalizacion tarea",
             "Fecha modificacion",
@@ -1835,7 +1765,7 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
         seen = set()
         filtered = []
         for advance in sorted(advances, key=lambda item: item.get("created_at", ""), reverse=True):
-            if advance["task_id"] in seen or advance.get("action") in NON_STATUS_ACTIONS:
+            if advance["task_id"] in seen or advance.get("action") == "COMENTARIO":
                 continue
             seen.add(advance["task_id"])
             filtered.append(advance)
@@ -1871,9 +1801,6 @@ def advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, Any]],
                     else {}
                 ),
                 "Comentario": combined_comment(advance),
-                "Integrantes": advance.get("integrantes") or "",
-                "Movil": advance.get("movil") or "",
-                "Tetra": advance.get("tetra") or "",
                 "Fecha inicio tarea": advance_task_start_date(advance),
                 "Fecha finalizacion tarea": advance_task_finish_date(advance),
                 "Fecha avance": advance_date(advance.get("created_at")),
@@ -1943,7 +1870,7 @@ def wrike_advances_export(tasks: list[dict[str, Any]], advances: list[dict[str, 
         if not order:
             continue
         action = str(advance.get("action") or "").strip()
-        if not action or action in NON_STATUS_ACTIONS:
+        if not action or action == "COMENTARIO":
             continue
         start_date, end_date, program_change = wrike_dates_for_advance(task, advance)
         wrike_status = status_usuario_for_wrike(action)
@@ -2133,7 +2060,6 @@ def render_records_section(
         key=f"records_view{key_suffix}",
     )
     tasks_by_id = {task["id"]: task for task in tasks}
-    latest_by_task = latest_status_by_task(advances)
     source_advances = filtered_advances
     if records_view == "Estado final por OT":
         source_advances = list(latest_status_by_task(filtered_advances).values())
@@ -2146,15 +2072,8 @@ def render_records_section(
             "Fecha modificacion": advance_date(advance.get("created_at")),
             "Hora modificacion": advance_time(advance.get("created_at")),
             "Tipo registro": advance_record_type(advance),
-            state_column: (
-                advance.get("action")
-                if is_status_advance(advance)
-                else effective_task_status(task, latest_by_task)
-            ),
+            state_column: advance.get("action"),
             "Comentario": combined_comment(advance),
-            "Integrantes": advance.get("integrantes") or "",
-            "Movil": advance.get("movil") or "",
-            "Tetra": advance.get("tetra") or "",
             "Fecha inicio tarea": advance_task_start_date(advance),
             "Fecha finalizacion tarea": advance_task_finish_date(advance),
             "Informado por": advance.get("reporter_name"),
@@ -2386,12 +2305,6 @@ def main() -> None:
         st.session_state.pop("common_reason_select", None)
         st.session_state.pop("state_select_for_selected", None)
         st.session_state["comment_dirty"] = False
-    if st.session_state.pop("clear_crew_info_next", False):
-        st.session_state.pop("crew_info_integrantes", None)
-        st.session_state.pop("crew_info_movil", None)
-        st.session_state.pop("crew_info_tetra", None)
-        st.session_state.pop("crew_info_toggle", None)
-        st.session_state["crew_info_dirty"] = False
     app_header()
     logout_controls()
     admin_panel()
@@ -2590,9 +2503,9 @@ def main() -> None:
         show_reason = pending_needs_reason or action_prev in REASON_ACTIONS
 
         if show_reason:
-            estado_col, motivo_col, detalle_col, crew_toggle_col = st.columns([1.0, 1.0, 1.5, 0.9])
+            estado_col, motivo_col, detalle_col = st.columns([1.0, 1.0, 1.8])
         else:
-            estado_col, detalle_col, crew_toggle_col = st.columns([1.0, 1.7, 0.9])
+            estado_col, detalle_col = st.columns([1.0, 2.0])
             motivo_col = None
 
         action = estado_col.selectbox(
@@ -2623,33 +2536,6 @@ def main() -> None:
             key="common_comment_text",
             on_change=mark_comment_dirty,
         )
-
-        crew_info_active = crew_toggle_col.checkbox(
-            "Info. cuadrilla",
-            key="crew_info_toggle",
-            help="Registra Integrantes / Movil / Tetra de las tareas seleccionadas como 'Info cuadrilla', sin cambiar su estado.",
-        )
-        crew_integrantes = crew_movil = crew_tetra = ""
-        if crew_info_active:
-            crew1, crew2, crew3 = st.columns(3)
-            crew_integrantes = crew1.text_input(
-                "Integrantes",
-                placeholder="Nombres de la cuadrilla",
-                key="crew_info_integrantes",
-                on_change=mark_crew_info_dirty,
-            )
-            crew_movil = crew2.text_input(
-                "Movil",
-                placeholder="Movil asignado",
-                key="crew_info_movil",
-                on_change=mark_crew_info_dirty,
-            )
-            crew_tetra = crew3.text_input(
-                "Tetra",
-                placeholder="Canal/numero tetra",
-                key="crew_info_tetra",
-                on_change=mark_crew_info_dirty,
-            )
 
         planned_actions = set(selected_actions)
         if action:
@@ -2696,13 +2582,10 @@ def main() -> None:
         action = ""
         reason = ""
         observation = ""
-        crew_info_active = False
-        crew_integrantes = crew_movil = crew_tetra = ""
         st.caption("Selecciona una o mas tareas para cambiar su estado o dejar un comentario.")
 
     def save_current_pending_work() -> bool:
         save_program_id = st.session_state.get("pending_program_id") or program["id"]
-        saved_something = False
         # Aplicar el estado elegido en el desplegable a las tareas seleccionadas.
         if action and selected_task_ids:
             for task_id in selected_task_ids:
@@ -2758,41 +2641,22 @@ def main() -> None:
                         "fecha_finalizacion_tarea": finish_task_date
                     }
             save_advance_entries(save_program_id, current_entries, reason, observation.strip(), task_dates)
-            saved_something = True
-        elif observation.strip() and selected_task_ids:
+            clear_pending_work()
+            return True
+        if observation.strip() and selected_task_ids:
             comment_entries = [{"task_id": task_id, "action": "COMENTARIO"} for task_id in selected_task_ids]
             save_advance_entries(program["id"], comment_entries, "", observation.strip())
-            saved_something = True
-
-        if crew_info_ready:
-            save_crew_info_entries(
-                program["id"],
-                selected_task_ids,
-                crew_integrantes.strip(),
-                crew_movil.strip(),
-                crew_tetra.strip(),
-            )
-            saved_something = True
-
-        if saved_something:
             clear_pending_work()
             return True
         st.warning("No hay cambios ni comentarios para guardar.")
         return False
 
     # Hay algo para guardar si hay pendientes, un estado elegido para las
-    # seleccionadas, un comentario para las seleccionadas, o info de cuadrilla
-    # cargada para las seleccionadas.
-    crew_info_ready = bool(
-        crew_info_active
-        and selected_task_ids
-        and (crew_integrantes.strip() or crew_movil.strip() or crew_tetra.strip())
-    )
+    # seleccionadas, o un comentario para las seleccionadas.
     has_savable_changes = (
         bool(pending_all_ids)
         or bool(action and selected_task_ids)
         or bool(observation.strip() and selected_task_ids)
-        or crew_info_ready
     )
 
     if st.session_state.pop("request_refresh", False):
@@ -2890,14 +2754,11 @@ def main() -> None:
             if action and selected_task_ids:
                 affected.update(selected_task_ids)
             comment_only = not affected and bool(observation.strip()) and bool(selected_task_ids)
-            crew_info_only = not affected and not comment_only and crew_info_ready
             if save_current_pending_work():
                 if affected:
                     st.success(f"{len(affected)} tarea(s) actualizada(s).")
                 elif comment_only:
                     st.success(f"{len(selected_task_ids)} comentario(s) guardado(s).")
-                elif crew_info_only:
-                    st.success(f"Info. cuadrilla guardada para {len(selected_task_ids)} tarea(s).")
                 else:
                     st.success("Cambios guardados.")
                 st.rerun()
