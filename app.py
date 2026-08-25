@@ -1167,6 +1167,38 @@ def crew_status_row_style(row: pd.Series) -> list[str]:
     return [style for _ in row]
 
 
+def delete_crew_status_records(record_ids: list[str]) -> None:
+    clean_ids = [item for item in record_ids if item]
+    for start in range(0, len(clean_ids), 100):
+        chunk = ",".join(clean_ids[start : start + 100])
+        sb_delete("crew_status", {"id": f"in.({chunk})"})
+
+
+def crew_status_rows_for_display(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "_record_id": record.get("id", ""),
+            "Cuadrilla": record.get("cuadrilla", ""),
+            "Estado operativo": record.get("estado_operativo", ""),
+            "Integrantes": record.get("integrantes") or "",
+            "Movil": record.get("movil") or "",
+            "Tetra": record.get("tetra") or "",
+            "Informado por": record.get("reporter_name", ""),
+            "Fecha": advance_date(record.get("created_at")),
+            "Hora": advance_time(record.get("created_at")),
+        }
+        for record in records
+    ]
+
+
+def crew_status_export(records: list[dict[str, Any]]) -> bytes:
+    rows = [
+        {key: value for key, value in row.items() if key != "_record_id"}
+        for row in crew_status_rows_for_display(records)
+    ]
+    return write_excel(rows, sheet_name="Info cuadrillas")
+
+
 def render_crew_status_section(area: str, crew_options: list[str]) -> None:
     with st.expander("Info de cuadrillas", expanded=False):
         st.caption("Estado operativo por cuadrilla, independiente de las tareas del programa.")
@@ -1214,29 +1246,79 @@ def render_crew_status_section(area: str, crew_options: list[str]) -> None:
                 st.success(f"Info de cuadrilla guardada para {crew_value}.")
                 st.rerun()
 
-        if not latest:
+        if not records:
             st.info("Todavia no hay info de cuadrillas cargada para esta area.")
             return
 
-        rows = [
-            {
-                "Cuadrilla": record.get("cuadrilla", ""),
-                "Estado operativo": record.get("estado_operativo", ""),
-                "Integrantes": record.get("integrantes") or "",
-                "Movil": record.get("movil") or "",
-                "Tetra": record.get("tetra") or "",
-                "Informado por": record.get("reporter_name", ""),
-                "Fecha": advance_date(record.get("created_at")),
-                "Hora": advance_time(record.get("created_at")),
-            }
-            for record in sorted(latest.values(), key=lambda item: normalize(item.get("cuadrilla")))
-        ]
-        df = pd.DataFrame(rows)
+        view_choice = st.selectbox(
+            "Vista",
+            ["Estado actual por cuadrilla", "Log completo"],
+            key="crew_status_view",
+        )
+        source_records = (
+            sorted(latest.values(), key=lambda item: normalize(item.get("cuadrilla")))
+            if view_choice == "Estado actual por cuadrilla"
+            else records
+        )
+        display_rows = crew_status_rows_for_display(source_records)
+        display_df = pd.DataFrame(
+            [{key: value for key, value in row.items() if key != "_record_id"} for row in display_rows]
+        )
         st.dataframe(
-            df.style.apply(crew_status_row_style, axis=1),
+            display_df.style.apply(crew_status_row_style, axis=1),
             hide_index=True,
             use_container_width=False,
         )
+
+        st.download_button(
+            "Exportar info cuadrillas Excel",
+            data=crew_status_export(source_records),
+            file_name=f"info_cuadrillas_{local_today().isoformat()}.xlsx",
+            key="export_crew_status",
+        )
+
+        if st.session_state.role == "admin":
+            with st.expander("Administracion de registros de cuadrillas", expanded=False):
+                visible_ids = tuple(str(row.get("_record_id", "")) for row in display_rows)
+                snapshot_key = f"crew_status_visible_snapshot_{view_choice}"
+                delete_editor_key = f"delete_crew_status_editor_{view_choice}"
+                if st.session_state.get(snapshot_key) != visible_ids:
+                    st.session_state.pop("select_all_visible_crew_status", None)
+                    st.session_state.pop(delete_editor_key, None)
+                    st.session_state[snapshot_key] = visible_ids
+                select_all_visible = st.checkbox(
+                    "Seleccionar todo visible",
+                    key="select_all_visible_crew_status",
+                )
+                delete_df = pd.DataFrame([{**{"Eliminar": False}, **row} for row in display_rows])
+                if select_all_visible:
+                    delete_df["Eliminar"] = True
+                edited_delete = st.data_editor(
+                    delete_df,
+                    hide_index=True,
+                    use_container_width=False,
+                    disabled=[column for column in delete_df.columns if column != "Eliminar"],
+                    column_config={
+                        "_record_id": None,
+                        "Eliminar": st.column_config.CheckboxColumn("Eliminar", width=76),
+                    },
+                    key=delete_editor_key,
+                )
+                selected_delete_ids = (
+                    edited_delete.loc[edited_delete["Eliminar"] == True, "_record_id"].tolist()
+                    if not edited_delete.empty
+                    else []
+                )
+                if st.button(
+                    "Borrar seleccionados",
+                    disabled=not selected_delete_ids,
+                    key="delete_crew_status_btn",
+                ):
+                    delete_crew_status_records(selected_delete_ids)
+                    st.session_state.pop(delete_editor_key, None)
+                    st.session_state.pop("select_all_visible_crew_status", None)
+                    st.success(f"{len(selected_delete_ids)} registro(s) eliminado(s).")
+                    st.rerun()
 
 
 def admin_panel() -> None:
