@@ -11,6 +11,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import pdfplumber
 import requests
 import streamlit as st
 from openpyxl.styles import Font, PatternFill
@@ -134,6 +135,12 @@ END_DATE_COLUMNS = [
 STATUS_COLUMNS = ["estado", "status", "estado actual", "status de usuario", "avance"]
 LOCATION_COLUMNS = ["ubicacion tecnica", "ubicacion", "ubic tecnica", "ubic. tecnica", "ubictecnica", "objeto ubicacion", "objetoubicacion"]
 KKS_COLUMNS = ["kks tag", "kks-tag", "kks/tag", "kks", "tag", "kkstag", "kks tag ubicacion", "kkstagubicacion"]
+CREW_STATUS_CUADRILLA_COLUMNS = ["cuadrilla"]
+CREW_STATUS_MOVIL_COLUMNS = ["interno movil", "movil", "interno"]
+CREW_STATUS_TETRA_COLUMNS = ["tetra"]
+CREW_STATUS_ENCARGADO_COLUMNS = ["encargado"]
+CREW_STATUS_OPERARIO_COLUMNS = ["operario"]
+CREW_STATUS_DISPONIBILIDAD_COLUMNS = ["disponibilidad"]
 
 
 def option_label(value: str, empty_label: str) -> str:
@@ -1129,6 +1136,77 @@ def save_crew_status(
     sb_insert("crew_status", row)
 
 
+def save_crew_status_entries(area: str, entries: list[dict[str, str]]) -> None:
+    profile = st.session_state.profile
+    rows = [
+        {
+            "area": area,
+            "cuadrilla": entry["cuadrilla"],
+            "estado_operativo": entry["estado_operativo"],
+            "integrantes": entry["integrantes"],
+            "movil": entry["movil"],
+            "tetra": entry["tetra"],
+            "reporter_name": profile["name"],
+            "reporter_company": profile.get("company") or "",
+            "reporter_sector": profile.get("sector") or "",
+        }
+        for entry in entries
+    ]
+    sb_insert("crew_status", rows)
+
+
+def read_crew_status_table(uploaded_file: Any) -> pd.DataFrame | None:
+    name = str(getattr(uploaded_file, "name", "") or "").lower()
+    if not name.endswith(".pdf"):
+        return pd.read_excel(uploaded_file)
+    with pdfplumber.open(uploaded_file) as pdf:
+        for page in pdf.pages:
+            for table in page.extract_tables():
+                if not table or len(table) < 2:
+                    continue
+                header = [str(cell or "").replace("\n", " ").strip() for cell in table[0]]
+                body = table[1:]
+                return pd.DataFrame(body, columns=header)
+    return None
+
+
+def map_crew_status_dataframe(df: pd.DataFrame) -> list[dict[str, str]]:
+    columns = list(df.columns)
+    mapping = {
+        "cuadrilla": find_column(columns, CREW_STATUS_CUADRILLA_COLUMNS),
+        "movil": find_column(columns, CREW_STATUS_MOVIL_COLUMNS),
+        "tetra": find_column(columns, CREW_STATUS_TETRA_COLUMNS),
+        "encargado": find_column(columns, CREW_STATUS_ENCARGADO_COLUMNS),
+        "operario": find_column(columns, CREW_STATUS_OPERARIO_COLUMNS),
+        "disponibilidad": find_column(columns, CREW_STATUS_DISPONIBILIDAD_COLUMNS),
+    }
+    seen_crews: set[str] = set()
+    entries: list[dict[str, str]] = []
+    for _, row in df.iterrows():
+        cuadrilla = row_text(row, mapping["cuadrilla"])
+        if not cuadrilla:
+            continue
+        crew_key = normalize_crew(cuadrilla)
+        if crew_key in seen_crews:
+            continue
+        seen_crews.add(crew_key)
+        encargado = row_text(row, mapping["encargado"])
+        operario = row_text(row, mapping["operario"])
+        integrantes = " / ".join(part for part in [encargado, operario] if part)
+        disponibilidad = row_text(row, mapping["disponibilidad"])
+        estado_operativo = "Operativa" if normalize(disponibilidad) == "disponible" else "No operativa"
+        entries.append(
+            {
+                "cuadrilla": cuadrilla,
+                "estado_operativo": estado_operativo,
+                "integrantes": integrantes,
+                "movil": row_text(row, mapping["movil"]),
+                "tetra": row_text(row, mapping["tetra"]),
+            }
+        )
+    return entries
+
+
 def crew_status_row_style(row: pd.Series) -> list[str]:
     status = str(row.get("Estado operativo") or "").strip().lower()
     style = (
@@ -1217,6 +1295,36 @@ def render_crew_status_section(area: str, crew_options: list[str]) -> None:
                 )
                 st.success(f"Info de cuadrilla guardada para {crew_value}.")
                 st.rerun()
+
+        st.markdown("**Importar cuadrillas desde Excel o PDF**")
+        st.caption(
+            "Reconoce columnas Cuadrilla, Encargado, Operario, Interno/Movil, Tetra y "
+            "Disponibilidad. Si hay varias filas de la misma cuadrilla, se toma la primera. "
+            "'Disponible' se carga como Operativa, cualquier otro valor como No operativa. "
+            "El PDF depende de como este armado el reporte; si no lo puede leer, probar con el Excel."
+        )
+        uploaded_crew_file = st.file_uploader(
+            "Archivo de ubicacion de cuadrillas",
+            type=["xlsx", "xls", "pdf"],
+            key="crew_status_import_file",
+        )
+        if st.button(
+            "Importar cuadrillas",
+            disabled=uploaded_crew_file is None,
+            key="crew_status_import_btn",
+        ):
+            with st.spinner("Importando archivo..."):
+                import_df = read_crew_status_table(uploaded_crew_file)
+            if import_df is None or import_df.empty:
+                st.error("No pude leer una tabla de cuadrillas en ese archivo. Probar con el Excel.")
+            else:
+                entries = map_crew_status_dataframe(import_df)
+                if not entries:
+                    st.error("No encontre cuadrillas validas en el archivo.")
+                else:
+                    save_crew_status_entries(area, entries)
+                    st.success(f"Info cargada para {len(entries)} cuadrilla(s).")
+                    st.rerun()
 
         if not records:
             st.info("Todavia no hay info de cuadrillas cargada para esta area.")
