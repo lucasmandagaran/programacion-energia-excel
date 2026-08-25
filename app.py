@@ -1115,6 +1115,19 @@ def latest_crew_status_by_crew(records: list[dict[str, Any]]) -> dict[str, dict[
     return latest
 
 
+def filter_crew_status(records: list[dict[str, Any]], company: str, sector: str) -> list[dict[str, Any]]:
+    company = scope_value(company)
+    sector = scope_value(sector)
+    filtered = []
+    for record in records:
+        if company and normalize(record.get("empresa")) != normalize(company):
+            continue
+        if sector and normalize(record.get("sector")) != normalize(sector):
+            continue
+        filtered.append(record)
+    return filtered
+
+
 def save_crew_status(
     area: str,
     cuadrilla: str,
@@ -1122,6 +1135,8 @@ def save_crew_status(
     integrantes: str,
     movil: str,
     tetra: str,
+    empresa: str,
+    sector: str,
 ) -> None:
     profile = st.session_state.profile
     row = {
@@ -1131,6 +1146,8 @@ def save_crew_status(
         "integrantes": integrantes,
         "movil": movil,
         "tetra": tetra,
+        "empresa": empresa,
+        "sector": sector,
         "reporter_name": profile["name"],
         "reporter_company": profile.get("company") or "",
         "reporter_sector": profile.get("sector") or "",
@@ -1138,7 +1155,7 @@ def save_crew_status(
     sb_insert("crew_status", row)
 
 
-def save_crew_status_entries(area: str, entries: list[dict[str, str]]) -> None:
+def save_crew_status_entries(area: str, entries: list[dict[str, str]], empresa: str, sector: str) -> None:
     profile = st.session_state.profile
     rows = [
         {
@@ -1148,6 +1165,8 @@ def save_crew_status_entries(area: str, entries: list[dict[str, str]]) -> None:
             "integrantes": entry["integrantes"],
             "movil": entry["movil"],
             "tetra": entry["tetra"],
+            "empresa": empresa,
+            "sector": sector,
             "reporter_name": profile["name"],
             "reporter_company": profile.get("company") or "",
             "reporter_sector": profile.get("sector") or "",
@@ -1157,10 +1176,34 @@ def save_crew_status_entries(area: str, entries: list[dict[str, str]]) -> None:
     sb_insert("crew_status", rows)
 
 
+def read_excel_with_split_header(uploaded_file: Any) -> pd.DataFrame:
+    """Lee un Excel tolerando encabezados partidos en 2 filas por celdas
+    combinadas (ej.: una columna ancha fusionada empuja las siguientes
+    columnas a una segunda fila de titulos)."""
+    raw = pd.read_excel(uploaded_file, header=None)
+    if len(raw) < 2:
+        return pd.read_excel(uploaded_file)
+    row0 = raw.iloc[0]
+    row1 = raw.iloc[1]
+    row0_blank = row0.isna()
+    row1_blank = row1.isna()
+    is_split_header = bool((row0_blank != row1_blank).all()) and not (
+        bool(row0_blank.all()) or bool(row1_blank.all())
+    )
+    if is_split_header:
+        header = [row0.iloc[i] if pd.notna(row0.iloc[i]) else row1.iloc[i] for i in range(len(row0))]
+        data = raw.iloc[2:].reset_index(drop=True)
+    else:
+        header = row0.tolist()
+        data = raw.iloc[1:].reset_index(drop=True)
+    data.columns = header
+    return data
+
+
 def read_crew_status_table(uploaded_file: Any) -> pd.DataFrame | None:
     name = str(getattr(uploaded_file, "name", "") or "").lower()
     if not name.endswith(".pdf"):
-        return pd.read_excel(uploaded_file)
+        return read_excel_with_split_header(uploaded_file)
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
             for table in page.extract_tables():
@@ -1191,7 +1234,7 @@ def map_crew_status_dataframe(df: pd.DataFrame) -> list[dict[str, str]]:
     seen_crews: set[str] = set()
     entries: list[dict[str, str]] = []
     for _, row in df.iterrows():
-        cuadrilla = row_text(row, mapping["cuadrilla"])
+        cuadrilla = ot_text(row_text(row, mapping["cuadrilla"]))
         if not cuadrilla:
             continue
         crew_key = normalize_crew(cuadrilla)
@@ -1213,8 +1256,8 @@ def map_crew_status_dataframe(df: pd.DataFrame) -> list[dict[str, str]]:
                 "cuadrilla": cuadrilla,
                 "estado_operativo": estado_operativo,
                 "integrantes": integrantes,
-                "movil": blank_if_na(row_text(row, mapping["movil"])),
-                "tetra": blank_if_na(row_text(row, mapping["tetra"])),
+                "movil": ot_text(blank_if_na(row_text(row, mapping["movil"]))),
+                "tetra": ot_text(blank_if_na(row_text(row, mapping["tetra"]))),
             }
         )
     return entries
@@ -1242,6 +1285,8 @@ def crew_status_rows_for_display(records: list[dict[str, Any]]) -> list[dict[str
         {
             "_record_id": record.get("id", ""),
             "Cuadrilla": record.get("cuadrilla", ""),
+            "Empresa": record.get("empresa") or "",
+            "Sector": record.get("sector") or "",
             "Estado operativo": record.get("estado_operativo", ""),
             "Integrantes": record.get("integrantes") or "",
             "Movil": record.get("movil") or "",
@@ -1262,10 +1307,21 @@ def crew_status_export(records: list[dict[str, Any]]) -> bytes:
     return write_excel(rows, sheet_name="Info cuadrillas")
 
 
-def render_crew_status_section(area: str, crew_options: list[str]) -> None:
+def render_crew_status_section(area: str, crew_options: list[str], filter_company: str, filter_sector: str) -> None:
     with st.expander("Info de cuadrillas", expanded=False):
-        st.caption("Estado operativo por cuadrilla, independiente de las tareas del programa.")
-        records = load_crew_status(area)
+        st.caption(
+            "Estado operativo por cuadrilla, independiente de las tareas del programa. "
+            "Se filtra por la misma Empresa/Sector que el tablero de tareas."
+        )
+        profile = st.session_state.profile
+        company_options = COMPANIES_BY_AREA[area]
+        sector_options = SECTORS_BY_AREA[area]
+        profile_company = profile.get("company") or ""
+        profile_sector = profile.get("sector") or ""
+        company_index = company_options.index(profile_company) if profile_company in company_options else 0
+        sector_index = sector_options.index(profile_sector) if profile_sector in sector_options else 0
+
+        records = filter_crew_status(load_crew_status(area), filter_company, filter_sector)
         latest = latest_crew_status_by_crew(records)
 
         with st.form("crew_status_form", clear_on_submit=True):
@@ -1280,6 +1336,21 @@ def render_crew_status_section(area: str, crew_options: list[str]) -> None:
                 "Cuadrilla",
                 placeholder="Ej.: 555, 556A, 720",
                 key="crew_status_manual",
+            )
+            manual_company_col, manual_sector_col = st.columns(2)
+            manual_company = manual_company_col.selectbox(
+                "Empresa",
+                company_options,
+                index=company_index,
+                format_func=lambda item: option_label(item, "Todas"),
+                key="crew_status_company",
+            )
+            manual_sector = manual_sector_col.selectbox(
+                "Sector",
+                sector_options,
+                index=sector_index,
+                format_func=lambda item: option_label(item, "Todos"),
+                key="crew_status_sector",
             )
             estado_operativo = st.radio(
                 "Estado operativo",
@@ -1305,6 +1376,8 @@ def render_crew_status_section(area: str, crew_options: list[str]) -> None:
                     integrantes.strip(),
                     movil.strip(),
                     tetra.strip(),
+                    manual_company,
+                    manual_sector,
                 )
                 st.success(f"Info de cuadrilla guardada para {crew_value}.")
                 st.rerun()
@@ -1315,6 +1388,21 @@ def render_crew_status_section(area: str, crew_options: list[str]) -> None:
             "Disponibilidad. Si hay varias filas de la misma cuadrilla, se toma la primera. "
             "'Disponible' se carga como Operativa, cualquier otro valor como No operativa. "
             "El PDF depende de como este armado el reporte; si no lo puede leer, probar con el Excel."
+        )
+        import_company_col, import_sector_col = st.columns(2)
+        import_company = import_company_col.selectbox(
+            "Empresa de estas cuadrillas",
+            company_options,
+            index=company_index,
+            format_func=lambda item: option_label(item, "Todas"),
+            key="crew_status_import_company",
+        )
+        import_sector = import_sector_col.selectbox(
+            "Sector de estas cuadrillas",
+            sector_options,
+            index=sector_index,
+            format_func=lambda item: option_label(item, "Todos"),
+            key="crew_status_import_sector",
         )
         uploaded_crew_file = st.file_uploader(
             "Archivo de ubicacion de cuadrillas",
@@ -1335,12 +1423,12 @@ def render_crew_status_section(area: str, crew_options: list[str]) -> None:
                 if not entries:
                     st.error("No encontre cuadrillas validas en el archivo.")
                 else:
-                    save_crew_status_entries(area, entries)
+                    save_crew_status_entries(area, entries, import_company, import_sector)
                     st.success(f"Info cargada para {len(entries)} cuadrilla(s).")
                     st.rerun()
 
         if not records:
-            st.info("Todavia no hay info de cuadrillas cargada para esta area.")
+            st.info("Todavia no hay info de cuadrillas cargada para este filtro de area/empresa/sector.")
             return
 
         view_choice = st.selectbox(
@@ -2721,7 +2809,7 @@ def main() -> None:
     loaded_for_scope = apply_filters(tasks, company, base_sector, "", None, None, "")
 
     render_dashboard(filtered_base, latest)
-    render_crew_status_section(area, crew_options)
+    render_crew_status_section(area, crew_options, company, base_sector)
     if show_all_tasks:
         filtered = filtered_base
     else:

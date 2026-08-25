@@ -53,6 +53,8 @@ create table if not exists public.crew_status (
   integrantes text,
   movil text,
   tetra text,
+  empresa text,
+  sector text,
   reporter_name text not null,
   reporter_company text,
   reporter_sector text,
@@ -63,6 +65,8 @@ alter table public.programs add column if not exists area text not null default 
 alter table public.tasks add column if not exists area text not null default 'GENERACION';
 alter table public.advances add column if not exists fecha_inicio_tarea date;
 alter table public.advances add column if not exists fecha_finalizacion_tarea date;
+alter table public.crew_status add column if not exists empresa text;
+alter table public.crew_status add column if not exists sector text;
 update public.programs set area = 'GENERACION' where area is null or trim(area) = '';
 update public.tasks set area = 'GENERACION' where area is null or trim(area) = '';
 
@@ -74,6 +78,7 @@ create index if not exists idx_advances_program on public.advances(program_id, c
 create index if not exists idx_advances_task on public.advances(task_id, created_at desc);
 create index if not exists idx_crew_status_area on public.crew_status(area, created_at desc);
 create index if not exists idx_crew_status_cuadrilla on public.crew_status(area, cuadrilla, created_at desc);
+create index if not exists idx_crew_status_filters on public.crew_status(area, empresa, sector);
 
 alter table public.programs disable row level security;
 alter table public.tasks disable row level security;
