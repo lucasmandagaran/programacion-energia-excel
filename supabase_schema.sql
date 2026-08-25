@@ -39,6 +39,23 @@ create table if not exists public.advances (
   observation text,
   fecha_inicio_tarea date,
   fecha_finalizacion_tarea date,
+  integrantes text,
+  movil text,
+  tetra text,
+  reporter_name text not null,
+  reporter_company text,
+  reporter_sector text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.crew_status (
+  id uuid primary key default gen_random_uuid(),
+  area text not null default 'GENERACION',
+  cuadrilla text not null,
+  estado_operativo text not null,
+  integrantes text,
+  movil text,
+  tetra text,
   reporter_name text not null,
   reporter_company text,
   reporter_sector text,
@@ -49,6 +66,9 @@ alter table public.programs add column if not exists area text not null default 
 alter table public.tasks add column if not exists area text not null default 'GENERACION';
 alter table public.advances add column if not exists fecha_inicio_tarea date;
 alter table public.advances add column if not exists fecha_finalizacion_tarea date;
+alter table public.advances add column if not exists integrantes text;
+alter table public.advances add column if not exists movil text;
+alter table public.advances add column if not exists tetra text;
 update public.programs set area = 'GENERACION' where area is null or trim(area) = '';
 update public.tasks set area = 'GENERACION' where area is null or trim(area) = '';
 
@@ -58,12 +78,16 @@ create index if not exists idx_tasks_area_program on public.tasks(area, program_
 create index if not exists idx_tasks_filters on public.tasks(program_id, empresa, sector, cuadrilla, fecha_inicio);
 create index if not exists idx_advances_program on public.advances(program_id, created_at desc);
 create index if not exists idx_advances_task on public.advances(task_id, created_at desc);
+create index if not exists idx_crew_status_area on public.crew_status(area, created_at desc);
+create index if not exists idx_crew_status_cuadrilla on public.crew_status(area, cuadrilla, created_at desc);
 
 alter table public.programs disable row level security;
 alter table public.tasks disable row level security;
 alter table public.advances disable row level security;
+alter table public.crew_status disable row level security;
 
 grant usage on schema public to anon;
 grant select, insert, update, delete on public.programs to anon;
 grant select, insert, update, delete on public.tasks to anon;
 grant select, insert, update, delete on public.advances to anon;
+grant select, insert, update, delete on public.crew_status to anon;
