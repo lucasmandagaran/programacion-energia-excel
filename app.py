@@ -1600,9 +1600,15 @@ def task_status_style(row: pd.Series) -> list[str]:
 
 
 def record_status_style(row: pd.Series) -> list[str]:
-    state_column = "Estado final" if "Estado final" in row.index else "Estado"
-    status = str(row.get(state_column) or "").strip().upper()
-    return [STATE_ROW_STYLES.get(status, "") for _ in row]
+    record_type = str(row.get("Tipo registro") or "").strip()
+    if record_type == "Comentario":
+        style_key = "COMENTARIO"
+    elif record_type == "Info cuadrilla":
+        style_key = "INFO CUADRILLA"
+    else:
+        state_column = "Estado final" if "Estado final" in row.index else "Estado"
+        style_key = str(row.get(state_column) or "").strip().upper()
+    return [STATE_ROW_STYLES.get(style_key, "") for _ in row]
 
 
 def task_table_column_config(compact: bool = False) -> dict[str, Any]:
@@ -2127,6 +2133,7 @@ def render_records_section(
         key=f"records_view{key_suffix}",
     )
     tasks_by_id = {task["id"]: task for task in tasks}
+    latest_by_task = latest_status_by_task(advances)
     source_advances = filtered_advances
     if records_view == "Estado final por OT":
         source_advances = list(latest_status_by_task(filtered_advances).values())
@@ -2139,7 +2146,11 @@ def render_records_section(
             "Fecha modificacion": advance_date(advance.get("created_at")),
             "Hora modificacion": advance_time(advance.get("created_at")),
             "Tipo registro": advance_record_type(advance),
-            state_column: advance.get("action"),
+            state_column: (
+                advance.get("action")
+                if is_status_advance(advance)
+                else effective_task_status(task, latest_by_task)
+            ),
             "Comentario": combined_comment(advance),
             "Integrantes": advance.get("integrantes") or "",
             "Movil": advance.get("movil") or "",
