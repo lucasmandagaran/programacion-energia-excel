@@ -345,7 +345,10 @@ def compact_key(value: Any) -> str:
 
 
 def normalize_crew(value: Any) -> str:
-    text = normalize(value).upper().replace(" ", "")
+    # Antes del "/" suele venir un sufijo de turno (ej.: "601/12h", "627/24hs")
+    # que no forma parte del numero de cuadrilla.
+    base = str(value or "").split("/")[0]
+    text = normalize(base).upper().replace(" ", "")
     text = re.sub(r"(MP|SF|SANFRAN|MANPETROL)$", "", text)
     return text
 
