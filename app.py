@@ -402,6 +402,11 @@ def distribution_company_sector(value: Any) -> tuple[str, str]:
     return "", ""
 
 
+def distribution_sector_company(sector: Any) -> str:
+    company, _ = distribution_company_sector(sector)
+    return company
+
+
 def infer_company_sector(cuadrilla: Any, area: Any = "GENERACION", sector_value: Any = "") -> tuple[str, str]:
     if canonical_area(area) == "DISTRIBUCION":
         return distribution_company_sector(sector_value)
@@ -1320,72 +1325,99 @@ def render_crew_status_section(area: str, crew_options: list[str], filter_compan
         profile_sector = profile.get("sector") or ""
         company_index = company_options.index(profile_company) if profile_company in company_options else 0
         sector_index = sector_options.index(profile_sector) if profile_sector in sector_options else 0
+        is_distribution = area == "DISTRIBUCION"
 
         records = filter_crew_status(load_crew_status(area), filter_company, filter_sector)
         latest = latest_crew_status_by_crew(records)
 
-        with st.form("crew_status_form", clear_on_submit=True):
-            crew_col1, crew_col2 = st.columns([1.0, 1.3])
-            suggested_crew = crew_col1.selectbox(
-                "Cuadrilla existente",
-                [""] + crew_options,
-                format_func=lambda item: option_label(item, "Elegir / escribir nueva"),
-                key="crew_status_suggested",
-            )
-            manual_crew = crew_col2.text_input(
-                "Cuadrilla",
-                placeholder="Ej.: 555, 556A, 720",
-                key="crew_status_manual",
-            )
-            manual_company_col, manual_sector_col = st.columns(2)
-            manual_company = manual_company_col.selectbox(
-                "Empresa",
-                company_options,
-                index=company_index,
-                format_func=lambda item: option_label(item, "Todas"),
-                key="crew_status_company",
-            )
-            manual_sector = manual_sector_col.selectbox(
-                "Sector",
-                sector_options,
-                index=sector_index,
-                format_func=lambda item: option_label(item, "Todos"),
-                key="crew_status_sector",
-            )
-            estado_operativo = st.radio(
-                "Estado operativo",
-                CREW_OPERATIONAL_STATES,
-                horizontal=True,
-                key="crew_status_estado",
-            )
-            info_col1, info_col2, info_col3 = st.columns(3)
-            integrantes = info_col1.text_input("Integrantes", key="crew_status_integrantes")
-            movil = info_col2.text_input("Movil", key="crew_status_movil")
-            tetra = info_col3.text_input("Tetra", key="crew_status_tetra")
-            submitted = st.form_submit_button("Guardar info cuadrilla", type="primary")
+        manual_entry_enabled = st.checkbox(
+            "Agregar/editar una cuadrilla manualmente",
+            key="crew_status_manual_toggle",
+        )
+        if manual_entry_enabled:
+            with st.form("crew_status_form", clear_on_submit=True):
+                crew_col1, crew_col2 = st.columns([1.0, 1.3])
+                suggested_crew = crew_col1.selectbox(
+                    "Cuadrilla existente",
+                    [""] + crew_options,
+                    format_func=lambda item: option_label(item, "Elegir / escribir nueva"),
+                    key="crew_status_suggested",
+                )
+                manual_crew = crew_col2.text_input(
+                    "Cuadrilla",
+                    placeholder="Ej.: 555, 556A, 720",
+                    key="crew_status_manual",
+                )
+                if is_distribution:
+                    manual_sector = st.selectbox(
+                        "Sector",
+                        sector_options,
+                        index=sector_index,
+                        format_func=lambda item: option_label(item, "Todos"),
+                        key="crew_status_sector",
+                    )
+                    manual_company_auto = distribution_sector_company(manual_sector)
+                    if manual_company_auto:
+                        st.caption(f"Empresa segun sector: **{manual_company_auto}**")
+                        manual_company = manual_company_auto
+                    else:
+                        manual_company = st.selectbox(
+                            "Empresa",
+                            company_options,
+                            index=company_index,
+                            format_func=lambda item: option_label(item, "Todas"),
+                            key="crew_status_company",
+                        )
+                else:
+                    manual_company_col, manual_sector_col = st.columns(2)
+                    manual_company = manual_company_col.selectbox(
+                        "Empresa",
+                        company_options,
+                        index=company_index,
+                        format_func=lambda item: option_label(item, "Todas"),
+                        key="crew_status_company",
+                    )
+                    manual_sector = manual_sector_col.selectbox(
+                        "Sector",
+                        sector_options,
+                        index=sector_index,
+                        format_func=lambda item: option_label(item, "Todos"),
+                        key="crew_status_sector",
+                    )
+                estado_operativo = st.radio(
+                    "Estado operativo",
+                    CREW_OPERATIONAL_STATES,
+                    horizontal=True,
+                    key="crew_status_estado",
+                )
+                info_col1, info_col2, info_col3 = st.columns(3)
+                integrantes = info_col1.text_input("Integrantes", key="crew_status_integrantes")
+                movil = info_col2.text_input("Movil", key="crew_status_movil")
+                tetra = info_col3.text_input("Tetra", key="crew_status_tetra")
+                submitted = st.form_submit_button("Guardar info cuadrilla", type="primary")
 
-        if submitted:
-            crew_value = (manual_crew or suggested_crew).strip()
-            if not crew_value:
-                st.warning("Elegi o escribi una cuadrilla.")
-            elif not scope_value(manual_company):
-                st.warning(
-                    "Elegi una Empresa especifica (no 'Todas') para que la cuadrilla "
-                    "sea visible para los usuarios de esa empresa."
-                )
-            else:
-                save_crew_status(
-                    area,
-                    crew_value,
-                    estado_operativo,
-                    integrantes.strip(),
-                    movil.strip(),
-                    tetra.strip(),
-                    manual_company,
-                    manual_sector,
-                )
-                st.success(f"Info de cuadrilla guardada para {crew_value}.")
-                st.rerun()
+            if submitted:
+                crew_value = (manual_crew or suggested_crew).strip()
+                if not crew_value:
+                    st.warning("Elegi o escribi una cuadrilla.")
+                elif not scope_value(manual_company):
+                    st.warning(
+                        "Elegi una Empresa especifica (no 'Todas') para que la cuadrilla "
+                        "sea visible para los usuarios de esa empresa."
+                    )
+                else:
+                    save_crew_status(
+                        area,
+                        crew_value,
+                        estado_operativo,
+                        integrantes.strip(),
+                        movil.strip(),
+                        tetra.strip(),
+                        manual_company,
+                        manual_sector,
+                    )
+                    st.success(f"Info de cuadrilla guardada para {crew_value}.")
+                    st.rerun()
 
         st.markdown("**Importar cuadrillas desde Excel o PDF**")
         st.caption(
@@ -1394,21 +1426,42 @@ def render_crew_status_section(area: str, crew_options: list[str], filter_compan
             "'Disponible' se carga como Operativa, cualquier otro valor como No operativa. "
             "El PDF depende de como este armado el reporte; si no lo puede leer, probar con el Excel."
         )
-        import_company_col, import_sector_col = st.columns(2)
-        import_company = import_company_col.selectbox(
-            "Empresa de estas cuadrillas",
-            company_options,
-            index=company_index,
-            format_func=lambda item: option_label(item, "Todas"),
-            key="crew_status_import_company",
-        )
-        import_sector = import_sector_col.selectbox(
-            "Sector de estas cuadrillas",
-            sector_options,
-            index=sector_index,
-            format_func=lambda item: option_label(item, "Todos"),
-            key="crew_status_import_sector",
-        )
+        if is_distribution:
+            import_sector = st.selectbox(
+                "Sector de estas cuadrillas",
+                sector_options,
+                index=sector_index,
+                format_func=lambda item: option_label(item, "Todos"),
+                key="crew_status_import_sector",
+            )
+            import_company_auto = distribution_sector_company(import_sector)
+            if import_company_auto:
+                st.caption(f"Empresa segun sector: **{import_company_auto}**")
+                import_company = import_company_auto
+            else:
+                import_company = st.selectbox(
+                    "Empresa de estas cuadrillas",
+                    company_options,
+                    index=company_index,
+                    format_func=lambda item: option_label(item, "Todas"),
+                    key="crew_status_import_company",
+                )
+        else:
+            import_company_col, import_sector_col = st.columns(2)
+            import_company = import_company_col.selectbox(
+                "Empresa de estas cuadrillas",
+                company_options,
+                index=company_index,
+                format_func=lambda item: option_label(item, "Todas"),
+                key="crew_status_import_company",
+            )
+            import_sector = import_sector_col.selectbox(
+                "Sector de estas cuadrillas",
+                sector_options,
+                index=sector_index,
+                format_func=lambda item: option_label(item, "Todos"),
+                key="crew_status_import_sector",
+            )
         uploaded_crew_file = st.file_uploader(
             "Archivo de ubicacion de cuadrillas",
             type=["xlsx", "xls", "pdf"],
@@ -1417,9 +1470,9 @@ def render_crew_status_section(area: str, crew_options: list[str], filter_compan
         import_company_missing = not scope_value(import_company)
         if import_company_missing:
             st.warning(
-                "Elegi arriba una Empresa especifica (no 'Todas') antes de importar: si "
-                "queda en 'Todas' las cuadrillas se guardan sin empresa y no aparecen "
-                "cuando un usuario filtra por su empresa."
+                "Elegi arriba una Empresa/Sector especifico (no 'Todas') antes de "
+                "importar: si queda en 'Todas' las cuadrillas se guardan sin empresa y "
+                "no aparecen cuando un usuario filtra por su empresa o sector."
             )
         if st.button(
             "Importar cuadrillas",
