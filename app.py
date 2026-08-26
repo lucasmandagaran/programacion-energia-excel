@@ -407,6 +407,19 @@ def distribution_sector_company(sector: Any) -> str:
     return company
 
 
+def crew_context_lookup(tasks: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
+    lookup: dict[str, tuple[str, str]] = {}
+    for task in tasks:
+        crew_key = normalize_crew(task.get("cuadrilla"))
+        if not crew_key or crew_key in lookup:
+            continue
+        company = effective_company(task)
+        sector = effective_sector(task)
+        if company or sector:
+            lookup[crew_key] = (company, sector)
+    return lookup
+
+
 def infer_company_sector(cuadrilla: Any, area: Any = "GENERACION", sector_value: Any = "") -> tuple[str, str]:
     if canonical_area(area) == "DISTRIBUCION":
         return distribution_company_sector(sector_value)
@@ -1170,8 +1183,8 @@ def save_crew_status_entries(area: str, entries: list[dict[str, str]], empresa: 
             "integrantes": entry["integrantes"],
             "movil": entry["movil"],
             "tetra": entry["tetra"],
-            "empresa": empresa,
-            "sector": sector,
+            "empresa": entry.get("empresa") or empresa,
+            "sector": entry.get("sector") or sector,
             "reporter_name": profile["name"],
             "reporter_company": profile.get("company") or "",
             "reporter_sector": profile.get("sector") or "",
@@ -1312,11 +1325,20 @@ def crew_status_export(records: list[dict[str, Any]]) -> bytes:
     return write_excel(rows, sheet_name="Info cuadrillas")
 
 
-def render_crew_status_section(area: str, crew_options: list[str], filter_company: str, filter_sector: str) -> None:
+def render_crew_status_section(
+    area: str,
+    crew_options: list[str],
+    filter_company: str,
+    filter_sector: str,
+    crew_lookup: dict[str, tuple[str, str]] | None = None,
+) -> None:
+    crew_lookup = crew_lookup or {}
     with st.expander("Info de cuadrillas", expanded=False):
         st.caption(
             "Estado operativo por cuadrilla, independiente de las tareas del programa. "
-            "Se filtra por la misma Empresa/Sector que el tablero de tareas."
+            "Se filtra por la misma Empresa/Sector que el tablero de tareas. Si la "
+            "cuadrilla ya aparece en el programa activo, la Empresa/Sector se detecta "
+            "sola a partir de esos datos."
         )
         profile = st.session_state.profile
         company_options = COMPANIES_BY_AREA[area]
@@ -1400,68 +1422,58 @@ def render_crew_status_section(area: str, crew_options: list[str], filter_compan
                 crew_value = (manual_crew or suggested_crew).strip()
                 if not crew_value:
                     st.warning("Elegi o escribi una cuadrilla.")
-                elif not scope_value(manual_company):
-                    st.warning(
-                        "Elegi una Empresa especifica (no 'Todas') para que la cuadrilla "
-                        "sea visible para los usuarios de esa empresa."
-                    )
                 else:
-                    save_crew_status(
-                        area,
-                        crew_value,
-                        estado_operativo,
-                        integrantes.strip(),
-                        movil.strip(),
-                        tetra.strip(),
-                        manual_company,
-                        manual_sector,
-                    )
-                    st.success(f"Info de cuadrilla guardada para {crew_value}.")
-                    st.rerun()
+                    detected = crew_lookup.get(normalize_crew(crew_value))
+                    final_company = (detected[0] if detected and detected[0] else "") or manual_company
+                    final_sector = (detected[1] if detected and detected[1] else "") or manual_sector
+                    if not scope_value(final_company):
+                        st.warning(
+                            "Elegi una Empresa especifica (no 'Todas') para que la cuadrilla "
+                            "sea visible para los usuarios de esa empresa."
+                        )
+                    else:
+                        if detected:
+                            st.caption(
+                                f"Empresa/Sector detectados del programa activo: "
+                                f"{final_company} / {final_sector or 'sin sector'}."
+                            )
+                        save_crew_status(
+                            area,
+                            crew_value,
+                            estado_operativo,
+                            integrantes.strip(),
+                            movil.strip(),
+                            tetra.strip(),
+                            final_company,
+                            final_sector,
+                        )
+                        st.success(f"Info de cuadrilla guardada para {crew_value}.")
+                        st.rerun()
 
         st.markdown("**Importar cuadrillas desde Excel o PDF**")
         st.caption(
             "Reconoce columnas Cuadrilla, Encargado, Operario, Interno/Movil, Tetra y "
             "Disponibilidad. Si hay varias filas de la misma cuadrilla, se toma la primera. "
             "'Disponible' se carga como Operativa, cualquier otro valor como No operativa. "
-            "El PDF depende de como este armado el reporte; si no lo puede leer, probar con el Excel."
+            "El PDF depende de como este armado el reporte; si no lo puede leer, probar con el Excel. "
+            "Empresa es el dato obligatorio del lote (quien informa el archivo); el Sector de "
+            "cada cuadrilla se detecta solo si ya aparece en el programa activo. Para las que "
+            "no se detecten, se usa el Sector por defecto que elijas abajo (opcional)."
         )
-        if is_distribution:
-            import_sector = st.selectbox(
-                "Sector de estas cuadrillas",
-                sector_options,
-                index=sector_index,
-                format_func=lambda item: option_label(item, "Todos"),
-                key="crew_status_import_sector",
-            )
-            import_company_auto = distribution_sector_company(import_sector)
-            if import_company_auto:
-                st.caption(f"Empresa segun sector: **{import_company_auto}**")
-                import_company = import_company_auto
-            else:
-                import_company = st.selectbox(
-                    "Empresa de estas cuadrillas",
-                    company_options,
-                    index=company_index,
-                    format_func=lambda item: option_label(item, "Todas"),
-                    key="crew_status_import_company",
-                )
-        else:
-            import_company_col, import_sector_col = st.columns(2)
-            import_company = import_company_col.selectbox(
-                "Empresa de estas cuadrillas",
-                company_options,
-                index=company_index,
-                format_func=lambda item: option_label(item, "Todas"),
-                key="crew_status_import_company",
-            )
-            import_sector = import_sector_col.selectbox(
-                "Sector de estas cuadrillas",
-                sector_options,
-                index=sector_index,
-                format_func=lambda item: option_label(item, "Todos"),
-                key="crew_status_import_sector",
-            )
+        import_company = st.selectbox(
+            "Empresa de estas cuadrillas",
+            company_options,
+            index=company_index,
+            format_func=lambda item: option_label(item, "Todas"),
+            key="crew_status_import_company",
+        )
+        import_sector = st.selectbox(
+            "Sector por defecto (para cuadrillas no detectadas)",
+            sector_options,
+            index=sector_index,
+            format_func=lambda item: option_label(item, "Todos"),
+            key="crew_status_import_sector",
+        )
         uploaded_crew_file = st.file_uploader(
             "Archivo de ubicacion de cuadrillas",
             type=["xlsx", "xls", "pdf"],
@@ -1470,8 +1482,8 @@ def render_crew_status_section(area: str, crew_options: list[str], filter_compan
         import_company_missing = not scope_value(import_company)
         if import_company_missing:
             st.warning(
-                "Elegi arriba una Empresa/Sector especifico (no 'Todas') antes de "
-                "importar: si queda en 'Todas' las cuadrillas se guardan sin empresa y "
+                "Elegi arriba la Empresa que informa estas cuadrillas (no 'Todas') antes "
+                "de importar: si queda en 'Todas' las cuadrillas se guardan sin empresa y "
                 "no aparecen cuando un usuario filtra por su empresa o sector."
             )
         if st.button(
@@ -1488,8 +1500,29 @@ def render_crew_status_section(area: str, crew_options: list[str], filter_compan
                 if not entries:
                     st.error("No encontre cuadrillas validas en el archivo.")
                 else:
+                    undetected: list[str] = []
+                    for entry in entries:
+                        detected = crew_lookup.get(normalize_crew(entry["cuadrilla"]))
+                        detected_sector = detected[1] if detected else ""
+                        if detected_sector:
+                            entry["sector"] = detected_sector
+                            entry["empresa"] = (
+                                distribution_sector_company(detected_sector)
+                                if is_distribution
+                                else (detected[0] if detected and detected[0] else "")
+                            ) or import_company
+                        else:
+                            undetected.append(entry["cuadrilla"])
+                            entry["sector"] = import_sector
+                            entry["empresa"] = import_company
                     save_crew_status_entries(area, entries, import_company, import_sector)
                     st.success(f"Info cargada para {len(entries)} cuadrilla(s).")
+                    if undetected:
+                        st.info(
+                            "No se detecto el Sector en el programa activo para: "
+                            f"{', '.join(undetected)}. Se cargaron con Empresa {import_company} / "
+                            f"Sector {import_sector or 'sin sector'}."
+                        )
                     st.rerun()
 
         if not records:
@@ -2727,7 +2760,7 @@ def render_dashboard(tasks: list[dict[str, Any]], latest: dict[str, dict[str, An
     overdue = sum(1 for task in tasks if _is_overdue(task, statuses[task["id"]]))
     pct_completed = round((completed / total) * 100) if total else 0
 
-    with st.expander("Resumen del programa", expanded=True):
+    with st.expander("Resumen del programa", expanded=False):
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Tareas", total)
         m2.metric("Completadas", f"{completed} ({pct_completed}%)")
@@ -2874,7 +2907,7 @@ def main() -> None:
     loaded_for_scope = apply_filters(tasks, company, base_sector, "", None, None, "")
 
     render_dashboard(filtered_base, latest)
-    render_crew_status_section(area, crew_options, company, base_sector)
+    render_crew_status_section(area, crew_options, company, base_sector, crew_context_lookup(tasks))
     if show_all_tasks:
         filtered = filtered_base
     else:
