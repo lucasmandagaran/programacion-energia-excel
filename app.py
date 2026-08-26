@@ -1368,6 +1368,11 @@ def render_crew_status_section(area: str, crew_options: list[str], filter_compan
             crew_value = (manual_crew or suggested_crew).strip()
             if not crew_value:
                 st.warning("Elegi o escribi una cuadrilla.")
+            elif not scope_value(manual_company):
+                st.warning(
+                    "Elegi una Empresa especifica (no 'Todas') para que la cuadrilla "
+                    "sea visible para los usuarios de esa empresa."
+                )
             else:
                 save_crew_status(
                     area,
@@ -1409,9 +1414,16 @@ def render_crew_status_section(area: str, crew_options: list[str], filter_compan
             type=["xlsx", "xls", "pdf"],
             key="crew_status_import_file",
         )
+        import_company_missing = not scope_value(import_company)
+        if import_company_missing:
+            st.warning(
+                "Elegi arriba una Empresa especifica (no 'Todas') antes de importar: si "
+                "queda en 'Todas' las cuadrillas se guardan sin empresa y no aparecen "
+                "cuando un usuario filtra por su empresa."
+            )
         if st.button(
             "Importar cuadrillas",
-            disabled=uploaded_crew_file is None,
+            disabled=uploaded_crew_file is None or import_company_missing,
             key="crew_status_import_btn",
         ):
             with st.spinner("Importando archivo..."):
