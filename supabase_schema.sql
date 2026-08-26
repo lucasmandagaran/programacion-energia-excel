@@ -80,13 +80,29 @@ create index if not exists idx_crew_status_area on public.crew_status(area, crea
 create index if not exists idx_crew_status_cuadrilla on public.crew_status(area, cuadrilla, created_at desc);
 create index if not exists idx_crew_status_filters on public.crew_status(area, empresa, sector);
 
-alter table public.programs disable row level security;
-alter table public.tasks disable row level security;
-alter table public.advances disable row level security;
-alter table public.crew_status disable row level security;
+alter table public.programs enable row level security;
+alter table public.tasks enable row level security;
+alter table public.advances enable row level security;
+alter table public.crew_status enable row level security;
 
 grant usage on schema public to anon;
 grant select, insert, update, delete on public.programs to anon;
 grant select, insert, update, delete on public.tasks to anon;
 grant select, insert, update, delete on public.advances to anon;
 grant select, insert, update, delete on public.crew_status to anon;
+
+drop policy if exists "anon_all_access" on public.programs;
+create policy "anon_all_access" on public.programs
+  for all to anon using (true) with check (true);
+
+drop policy if exists "anon_all_access" on public.tasks;
+create policy "anon_all_access" on public.tasks
+  for all to anon using (true) with check (true);
+
+drop policy if exists "anon_all_access" on public.advances;
+create policy "anon_all_access" on public.advances
+  for all to anon using (true) with check (true);
+
+drop policy if exists "anon_all_access" on public.crew_status;
+create policy "anon_all_access" on public.crew_status
+  for all to anon using (true) with check (true);
