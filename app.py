@@ -432,7 +432,15 @@ def distribution_company_sector(value: Any) -> tuple[str, str]:
 
 
 def distribution_company_sector_from_crew(cuadrilla: Any) -> tuple[str, str]:
-    return DISTRIBUTION_CREW_SCOPES.get(normalize_crew(cuadrilla), ("", ""))
+    crew_key = normalize_crew(cuadrilla)
+    if crew_key in DISTRIBUTION_CREW_SCOPES:
+        return DISTRIBUTION_CREW_SCOPES[crew_key]
+    raw_key = compact_key(cuadrilla)
+    if raw_key.startswith("mp") or "manpetrol" in raw_key:
+        return "MANPETROL", ""
+    if raw_key.startswith("ep") or "electropatagonia" in raw_key:
+        return "ELECTRO PATAGONIA", ""
+    return "", ""
 
 
 def distribution_sector_company(sector: Any) -> str:
@@ -472,6 +480,9 @@ def infer_company_sector(cuadrilla: Any, area: Any = "GENERACION", sector_value:
 def effective_company(task: dict[str, Any]) -> str:
     area = task_area(task)
     if area == "DISTRIBUCION":
+        crew_company, _ = distribution_company_sector_from_crew(task.get("cuadrilla"))
+        if crew_company:
+            return crew_company
         crew_status_company = canonical_company(task.get("_crew_status_company"))
         if crew_status_company:
             return crew_status_company
@@ -484,6 +495,9 @@ def effective_company(task: dict[str, Any]) -> str:
 def effective_sector(task: dict[str, Any]) -> str:
     area = task_area(task)
     if area == "DISTRIBUCION":
+        _, crew_sector = distribution_company_sector_from_crew(task.get("cuadrilla"))
+        if crew_sector:
+            return crew_sector
         crew_status_sector = canonical_sector(task.get("_crew_status_sector"))
         if crew_status_sector:
             return crew_status_sector
@@ -1096,7 +1110,10 @@ def map_excel(df: pd.DataFrame, area: str = "GENERACION") -> list[dict[str, Any]
         start = parse_date(row.get(mapping["fecha_inicio"])) if mapping["fecha_inicio"] else None
         end = parse_date(row.get(mapping["fecha_fin"])) if mapping["fecha_fin"] else None
         if area == "DISTRIBUCION":
-            inferred_company, inferred_sector = distribution_company_sector(current_section)
+            section_company, section_sector = distribution_company_sector(current_section)
+            crew_company, crew_sector = distribution_company_sector_from_crew(cuadrilla)
+            inferred_company = crew_company or section_company
+            inferred_sector = crew_sector or section_sector
         else:
             inferred_company, inferred_sector = infer_company_sector(cuadrilla, area)
         empresa = canonical_company(row_text(row, mapping["empresa"])) or inferred_company or canonical_company(cuadrilla)
