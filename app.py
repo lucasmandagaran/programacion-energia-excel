@@ -59,6 +59,32 @@ DISTRIBUTION_SECTORS = {
     "trabajos sin tension",
     "guardia 24hs",
 }
+DISTRIBUTION_CREW_SCOPES = {
+    # Cuadrillas de Distribucion. Estas reglas tienen prioridad sobre la
+    # carpeta/sector del Excel porque un mismo sector puede tener varias empresas.
+    "600": ("ELECTRO PATAGONIA", "Estaciones Transformadoras"),
+    "612": ("ELECTRO PATAGONIA", "Estaciones Transformadoras"),
+    "614": ("MANPETROL", "Estaciones Transformadoras"),
+    "618": ("ELECTRO PATAGONIA", "Telemando"),
+    "652": ("MANPETROL", "Trabajos con tension"),
+    "653": ("MANPETROL", "Trabajos con tension"),
+    "654": ("MANPETROL", "Trabajos con tension"),
+    "655": ("MANPETROL", "Trabajos con tension"),
+    "656": ("MANPETROL", "Trabajos con tension"),
+    "657": ("MANPETROL", "Trabajos con tension"),
+    "658": ("MANPETROL", "Trabajos con tension"),
+    "659": ("MANPETROL", "Trabajos con tension"),
+    "601": ("ELECTRO PATAGONIA", "Trabajos sin tension"),
+    "603": ("ELECTRO PATAGONIA", "Trabajos sin tension"),
+    "615": ("ELECTRO PATAGONIA", "Trabajos sin tension"),
+    "616": ("ELECTRO PATAGONIA", "Trabajos sin tension"),
+    "617": ("ELECTRO PATAGONIA", "Trabajos sin tension"),
+    "619": ("ELECTRO PATAGONIA", "Trabajos sin tension"),
+    "621": ("ELECTRO PATAGONIA", "Trabajos sin tension"),
+    "627": ("ELECTRO PATAGONIA", "Trabajos sin tension"),
+    "G24": ("MANPETROL", "Guardia 24hs"),
+    "502A": ("MANPETROL", "Guardia 24hs"),
+}
 STATE_ACTIONS = ["EN CURSO", "EN ESPERA", "COMPLETADO", "REPLANIFICAR", "SIN AVANCE"]
 REASON_ACTIONS = {"EN ESPERA", "REPLANIFICAR"}
 HIDE_AFTER_SAVE_ACTIONS = {"COMPLETADO", "REPLANIFICAR"}
@@ -405,6 +431,10 @@ def distribution_company_sector(value: Any) -> tuple[str, str]:
     return "", ""
 
 
+def distribution_company_sector_from_crew(cuadrilla: Any) -> tuple[str, str]:
+    return DISTRIBUTION_CREW_SCOPES.get(normalize_crew(cuadrilla), ("", ""))
+
+
 def distribution_sector_company(sector: Any) -> str:
     company, _ = distribution_company_sector(sector)
     return company
@@ -425,6 +455,9 @@ def crew_context_lookup(tasks: list[dict[str, Any]]) -> dict[str, tuple[str, str
 
 def infer_company_sector(cuadrilla: Any, area: Any = "GENERACION", sector_value: Any = "") -> tuple[str, str]:
     if canonical_area(area) == "DISTRIBUCION":
+        crew_company, crew_sector = distribution_company_sector_from_crew(cuadrilla)
+        if crew_company or crew_sector:
+            return crew_company, crew_sector
         return distribution_company_sector(sector_value)
     crew = normalize_crew(cuadrilla)
     if crew in {"555", "555A", "A555"}:
@@ -438,6 +471,10 @@ def infer_company_sector(cuadrilla: Any, area: Any = "GENERACION", sector_value:
 
 def effective_company(task: dict[str, Any]) -> str:
     area = task_area(task)
+    if area == "DISTRIBUCION":
+        crew_status_company = canonical_company(task.get("_crew_status_company"))
+        if crew_status_company:
+            return crew_status_company
     value = canonical_company(task.get("empresa"))
     inferred, _ = infer_company_sector(task.get("cuadrilla"), area, task.get("sector"))
     crew_company = canonical_company(task.get("cuadrilla"))
@@ -446,6 +483,10 @@ def effective_company(task: dict[str, Any]) -> str:
 
 def effective_sector(task: dict[str, Any]) -> str:
     area = task_area(task)
+    if area == "DISTRIBUCION":
+        crew_status_sector = canonical_sector(task.get("_crew_status_sector"))
+        if crew_status_sector:
+            return crew_status_sector
     value = canonical_sector(task.get("sector"))
     _, inferred = infer_company_sector(task.get("cuadrilla"), area, task.get("sector"))
     return value or inferred
