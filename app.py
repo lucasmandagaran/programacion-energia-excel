@@ -1199,12 +1199,32 @@ def filter_crew_status(records: list[dict[str, Any]], company: str, sector: str)
     sector = scope_value(sector)
     filtered = []
     for record in records:
-        if company and normalize(record.get("empresa")) != normalize(company):
+        record_company = crew_status_effective_company(record)
+        record_sector = crew_status_effective_sector(record)
+        if company and normalize(record_company) != normalize(company):
             continue
-        if sector and normalize(record.get("sector")) != normalize(sector):
+        if sector and normalize(record_sector) != normalize(sector):
             continue
         filtered.append(record)
     return filtered
+
+
+def crew_status_effective_company(record: dict[str, Any]) -> str:
+    area = canonical_area(record.get("area") or "GENERACION")
+    if area == "DISTRIBUCION":
+        crew_company, _ = distribution_company_sector_from_crew(record.get("cuadrilla"))
+        if crew_company:
+            return crew_company
+    return canonical_company(record.get("empresa")) or ""
+
+
+def crew_status_effective_sector(record: dict[str, Any]) -> str:
+    area = canonical_area(record.get("area") or "GENERACION")
+    if area == "DISTRIBUCION":
+        _, crew_sector = distribution_company_sector_from_crew(record.get("cuadrilla"))
+        if crew_sector:
+            return crew_sector
+    return canonical_sector(record.get("sector")) or ""
 
 
 def save_crew_status(
@@ -1218,6 +1238,10 @@ def save_crew_status(
     sector: str,
 ) -> None:
     profile = st.session_state.profile
+    if canonical_area(area) == "DISTRIBUCION":
+        crew_company, crew_sector = distribution_company_sector_from_crew(cuadrilla)
+        empresa = crew_company or empresa
+        sector = crew_sector or sector
     row = {
         "area": area,
         "cuadrilla": cuadrilla,
@@ -1236,22 +1260,29 @@ def save_crew_status(
 
 def save_crew_status_entries(area: str, entries: list[dict[str, str]], empresa: str, sector: str) -> None:
     profile = st.session_state.profile
-    rows = [
-        {
+    rows = []
+    for entry in entries:
+        entry_company = entry.get("empresa") or empresa
+        entry_sector = entry.get("sector") or sector
+        if canonical_area(area) == "DISTRIBUCION":
+            crew_company, crew_sector = distribution_company_sector_from_crew(entry["cuadrilla"])
+            entry_company = crew_company or entry_company
+            entry_sector = crew_sector or entry_sector
+        rows.append(
+            {
             "area": area,
             "cuadrilla": entry["cuadrilla"],
             "estado_operativo": entry["estado_operativo"],
             "integrantes": entry["integrantes"],
             "movil": entry["movil"],
             "tetra": entry["tetra"],
-            "empresa": entry.get("empresa") or empresa,
-            "sector": entry.get("sector") or sector,
+            "empresa": entry_company,
+            "sector": entry_sector,
             "reporter_name": profile["name"],
             "reporter_company": profile.get("company") or "",
             "reporter_sector": profile.get("sector") or "",
-        }
-        for entry in entries
-    ]
+            }
+        )
     sb_insert("crew_status", rows)
 
 
@@ -1364,8 +1395,8 @@ def crew_status_rows_for_display(records: list[dict[str, Any]]) -> list[dict[str
         {
             "_record_id": record.get("id", ""),
             "Cuadrilla": record.get("cuadrilla", ""),
-            "Empresa": record.get("empresa") or "",
-            "Sector": record.get("sector") or "",
+            "Empresa": crew_status_effective_company(record),
+            "Sector": crew_status_effective_sector(record),
             "Estado operativo": record.get("estado_operativo", ""),
             "Integrantes": record.get("integrantes") or "",
             "Movil": record.get("movil") or "",
